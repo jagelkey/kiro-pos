@@ -1,0 +1,4 @@
+storePassword=your_keystore_password
+keyPassword=your_key_password
+keyAlias=pos_kasir_key
+storeFile=../keystore/pos_kasir.jks

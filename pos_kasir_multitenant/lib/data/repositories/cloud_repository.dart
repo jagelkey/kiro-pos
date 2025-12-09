@@ -289,6 +289,7 @@ class CloudRepository {
     return Transaction(
       id: m['id'] as String,
       tenantId: m['tenant_id'] as String,
+      branchId: m['branch_id'] as String?,
       userId: m['user_id'] as String,
       shiftId: m['shift_id'] as String?,
       discountId: m['discount_id'] as String?,
@@ -306,6 +307,7 @@ class CloudRepository {
     return {
       'id': t.id,
       'tenant_id': t.tenantId,
+      'branch_id': t.branchId,
       'user_id': t.userId,
       'shift_id': t.shiftId,
       'discount_id': t.discountId,

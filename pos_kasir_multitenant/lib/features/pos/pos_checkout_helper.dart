@@ -123,6 +123,8 @@ class PosCheckoutHelper {
         final transaction = trans.Transaction(
           id: _generateTransactionId(),
           tenantId: tenant.id,
+          branchId: user
+              .branchId, // Multi-branch support: Associate with user's branch
           userId: user.id,
           shiftId: shiftId,
           discountId: discountId,
@@ -139,6 +141,7 @@ class PosCheckoutHelper {
         final transactionMap = {
           'id': transaction.id,
           'tenant_id': transaction.tenantId,
+          'branch_id': transaction.branchId,
           'user_id': transaction.userId,
           'shift_id': transaction.shiftId,
           'discount_id': transaction.discountId,

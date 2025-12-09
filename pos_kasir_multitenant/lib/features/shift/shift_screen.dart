@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/shift.dart';
 import '../../shared/widgets/app_card.dart';
 import '../auth/auth_provider.dart';
@@ -11,6 +13,29 @@ import 'shift_provider.dart';
 /// Requirements 13.1, 13.2, 13.3, 13.4: Shift management UI
 class ShiftScreen extends ConsumerWidget {
   const ShiftScreen({super.key});
+
+  /// Format error message for user-friendly display
+  String _formatErrorMessage(dynamic error) {
+    final errorStr = error.toString().toLowerCase();
+
+    if (errorStr.contains('socketexception') ||
+        errorStr.contains('connection refused') ||
+        errorStr.contains('network') ||
+        errorStr.contains('timeout')) {
+      return 'Tidak dapat terhubung ke server. Periksa koneksi internet.';
+    }
+
+    if (errorStr.contains('tenant')) {
+      return 'Tenant tidak ditemukan. Silakan login ulang.';
+    }
+
+    if (errorStr.contains('user')) {
+      return 'User tidak ditemukan. Silakan login ulang.';
+    }
+
+    // Clean up exception prefix
+    return error.toString().replaceAll('Exception: ', '');
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -100,6 +125,8 @@ class ShiftScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
+          // Offline indicator at top of body
+          if (!kIsWeb && isOfflineCapable) const OfflineIndicator(),
           // Active Shift Card with error handling
           activeShiftAsync.when(
             data: (shift) => _ActiveShiftCard(shift: shift),
@@ -108,7 +135,7 @@ class ShiftScreen extends ConsumerWidget {
               child: Center(child: CircularProgressIndicator()),
             ),
             error: (e, _) => _ErrorCard(
-              message: 'Gagal memuat shift aktif: $e',
+              message: _formatErrorMessage(e),
               onRetry: () => ref.read(activeShiftProvider.notifier).retry(),
             ),
           ),
@@ -126,7 +153,7 @@ class ShiftScreen extends ConsumerWidget {
               data: (shifts) => _ShiftHistoryList(shifts: shifts),
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => _ErrorView(
-                message: 'Gagal memuat riwayat shift: $e',
+                message: _formatErrorMessage(e),
                 onRetry: () => ref.read(shiftHistoryProvider.notifier).retry(),
               ),
             ),
@@ -419,10 +446,13 @@ class _ActiveShiftCard extends ConsumerWidget {
                       } catch (e) {
                         if (dialogContext.mounted) {
                           setState(() => isLoading = false);
+                          final errorMsg =
+                              e.toString().replaceAll('Exception: ', '');
                           scaffoldMessenger.showSnackBar(
                             SnackBar(
-                              content: Text('Gagal memulai shift: $e'),
+                              content: Text(errorMsg),
                               backgroundColor: Colors.red,
+                              duration: const Duration(seconds: 4),
                             ),
                           );
                         }
@@ -687,10 +717,13 @@ class _ActiveShiftCard extends ConsumerWidget {
                         } catch (e) {
                           if (dialogContext.mounted) {
                             setState(() => isLoading = false);
+                            final errorMsg =
+                                e.toString().replaceAll('Exception: ', '');
                             scaffoldMessenger.showSnackBar(
                               SnackBar(
-                                content: Text('Gagal mengakhiri shift: $e'),
+                                content: Text(errorMsg),
                                 backgroundColor: Colors.red,
+                                duration: const Duration(seconds: 4),
                               ),
                             );
                           }

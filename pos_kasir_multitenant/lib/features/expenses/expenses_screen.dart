@@ -288,16 +288,64 @@ class ExpensesScreen extends ConsumerWidget {
 
   Widget _buildExpensesList(BuildContext context, WidgetRef ref,
       List<Expense> filtered, List<Expense> all) {
+    final searchQuery = ref.watch(expenseSearchProvider);
+    final categoryFilter = ref.watch(expenseCategoryFilterProvider);
+    final dateFilter = ref.watch(expenseDateFilterProvider);
+    final hasFilters =
+        searchQuery.isNotEmpty || categoryFilter != null || dateFilter != 'all';
+
     if (filtered.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      return RefreshIndicator(
+        onRefresh: () async {
+          await ref.read(expensesProvider.notifier).loadExpenses();
+        },
+        child: ListView(
           children: [
-            Icon(Icons.receipt_long_outlined,
-                size: 64, color: AppTheme.textMuted),
-            const SizedBox(height: 16),
-            Text('Tidak ada biaya',
-                style: Theme.of(context).textTheme.titleLarge),
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.5,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      hasFilters
+                          ? Icons.search_off
+                          : Icons.receipt_long_outlined,
+                      size: 64,
+                      color: AppTheme.textMuted,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      hasFilters ? 'Tidak ada hasil' : 'Tidak ada biaya',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      hasFilters
+                          ? 'Coba ubah filter atau kata kunci pencarian'
+                          : 'Tap tombol + untuk menambah biaya',
+                      style: TextStyle(color: AppTheme.textMuted),
+                      textAlign: TextAlign.center,
+                    ),
+                    if (hasFilters) ...[
+                      const SizedBox(height: 16),
+                      TextButton.icon(
+                        onPressed: () {
+                          ref.read(expenseSearchProvider.notifier).state = '';
+                          ref
+                              .read(expenseCategoryFilterProvider.notifier)
+                              .state = null;
+                          ref.read(expenseDateFilterProvider.notifier).state =
+                              'all';
+                        },
+                        icon: const Icon(Icons.clear_all),
+                        label: const Text('Hapus Filter'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       );
@@ -363,13 +411,18 @@ class ExpensesScreen extends ConsumerWidget {
             ],
           ),
         ),
-        // List
+        // List with RefreshIndicator for pull-to-refresh
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: filtered.length,
-            itemBuilder: (context, index) =>
-                _ExpenseCard(expense: filtered[index]),
+          child: RefreshIndicator(
+            onRefresh: () async {
+              await ref.read(expensesProvider.notifier).loadExpenses();
+            },
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: filtered.length,
+              itemBuilder: (context, index) =>
+                  _ExpenseCard(expense: filtered[index]),
+            ),
           ),
         ),
       ],
@@ -377,18 +430,39 @@ class ExpensesScreen extends ConsumerWidget {
   }
 
   Widget _buildErrorWidget(BuildContext context, WidgetRef ref, Object error) {
+    // Extract clean error message
+    String errorMessage = error.toString();
+    if (errorMessage.startsWith('Exception: ')) {
+      errorMessage = errorMessage.substring(11);
+    }
+
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 64, color: Colors.red),
-          const SizedBox(height: 16),
-          Text('Error: $error'),
-          ElevatedButton(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              'Gagal memuat biaya operasional',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              errorMessage,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
               onPressed: () =>
                   ref.read(expensesProvider.notifier).loadExpenses(),
-              child: const Text('Coba Lagi')),
-        ],
+              icon: const Icon(Icons.refresh),
+              label: const Text('Coba Lagi'),
+            ),
+          ],
+        ),
       ),
     );
   }

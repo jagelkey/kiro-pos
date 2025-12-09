@@ -33,7 +33,7 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
     _loadPersistedCart();
   }
 
-  /// Load cart from persistent storage
+  /// Load cart from persistent storage with multi-tenant and multi-branch support
   Future<void> _loadPersistedCart() async {
     try {
       final authState = _ref.read(authProvider);
@@ -43,6 +43,7 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
       final cart = await CartPersistence.loadCart(
         productRepo,
         authState.tenant!.id,
+        currentBranchId: authState.user?.branchId,
       );
       state = cart;
     } catch (e) {
@@ -50,20 +51,36 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
     }
   }
 
-  /// Persist cart to storage
+  /// Persist cart to storage with multi-tenant and multi-branch support
   Future<void> _persistCart() async {
     try {
       final authState = _ref.read(authProvider);
       if (authState.tenant == null) return;
 
-      await CartPersistence.saveCart(state, authState.tenant!.id);
+      await CartPersistence.saveCart(
+        state,
+        authState.tenant!.id,
+        branchId: authState.user?.branchId,
+      );
     } catch (e) {
       debugPrint('Error persisting cart: $e');
     }
   }
 
+  /// Add item to cart with stock validation and multi-tenant check
   void addItem(Product product,
       {String size = 'Regular', String temp = 'Normal'}) {
+    // Multi-tenant validation
+    final authState = _ref.read(authProvider);
+    if (authState.tenant == null) {
+      debugPrint('Cannot add item: No tenant context');
+      return;
+    }
+    if (product.tenantId != authState.tenant!.id) {
+      debugPrint('Cannot add item: Product belongs to different tenant');
+      return;
+    }
+
     double extra = size == 'Large' ? 5000 : 0;
     final existingIndex = state.indexWhere(
       (item) =>
@@ -79,6 +96,7 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
 
     // Validate against available stock
     if (currentQtyInCart >= product.stock) {
+      debugPrint('Cannot add item: Stock limit reached (${product.stock})');
       return; // Don't add if exceeds stock
     }
 
@@ -217,6 +235,19 @@ final selectedDiscountProvider = StateProvider<Discount?>((ref) => null);
 // Provider for sync manager
 final syncManagerProvider = Provider((ref) => SyncManager.instance);
 
+// Provider for branch-filtered active discounts (multi-tenant + multi-branch)
+final posBranchDiscountsProvider =
+    FutureProvider.autoDispose<List<Discount>>((ref) async {
+  final authState = ref.watch(authProvider);
+  if (authState.user == null) return [];
+  final repo = ref.read(posDiscountRepositoryProvider);
+  // Get discounts filtered by branch for multi-branch support
+  return repo.getActiveDiscountsByBranch(
+    authState.user!.tenantId,
+    authState.user!.branchId,
+  );
+});
+
 class PosScreen extends ConsumerStatefulWidget {
   const PosScreen({super.key});
 
@@ -229,16 +260,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   double _cashReceived = 0;
   String _paymentMethod = 'cash';
   String? _lastTenantId;
+  String? _lastBranchId; // Multi-branch: Track branch changes
   bool _isRefreshing = false;
   bool _isCheckingOut = false;
 
   @override
   void initState() {
     super.initState();
-    // Store initial tenant ID for change detection
+    // Store initial tenant and branch ID for change detection
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final authState = ref.read(authProvider);
       _lastTenantId = authState.tenant?.id;
+      _lastBranchId = authState.user?.branchId;
     });
   }
 
@@ -261,26 +294,38 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
   }
 
-  /// Clear cart and discount when tenant changes (multi-tenant data isolation)
-  void _checkTenantChange() {
+  /// Clear cart and discount when tenant or branch changes (multi-tenant + multi-branch data isolation)
+  void _checkTenantAndBranchChange() {
     final authState = ref.read(authProvider);
     final currentTenantId = authState.tenant?.id;
+    final currentBranchId = authState.user?.branchId;
 
-    if (_lastTenantId != null && currentTenantId != _lastTenantId) {
-      // Tenant changed - clear cart and discount to prevent data leakage
+    final tenantChanged =
+        _lastTenantId != null && currentTenantId != _lastTenantId;
+    final branchChanged =
+        _lastBranchId != null && currentBranchId != _lastBranchId;
+
+    if (tenantChanged || branchChanged) {
+      // Tenant or branch changed - clear cart and discount to prevent data leakage
       ref.read(cartProvider.notifier).clear();
       ref.read(selectedDiscountProvider.notifier).state = null;
       _discount = 0;
       _cashReceived = 0;
       _paymentMethod = 'cash';
+
+      // Refresh discounts for new branch
+      if (branchChanged) {
+        ref.invalidate(posBranchDiscountsProvider);
+      }
     }
     _lastTenantId = currentTenantId;
+    _lastBranchId = currentBranchId;
   }
 
   @override
   Widget build(BuildContext context) {
-    // Check for tenant change on every build
-    _checkTenantChange();
+    // Check for tenant and branch change on every build (multi-tenant + multi-branch)
+    _checkTenantAndBranchChange();
     final cart = ref.watch(cartProvider);
     final productsAsync = ref.watch(productProvider);
     final totalItems = ref.watch(cartProvider.notifier).totalItems;
@@ -527,10 +572,42 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     if (_isCheckingOut) return;
 
     final cart = ref.read(cartProvider);
-    if (cart.isEmpty) return;
+    if (cart.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Keranjang kosong. Tambahkan produk terlebih dahulu.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     final authState = ref.read(authProvider);
-    if (authState.user == null || authState.tenant == null) return;
+    if (authState.user == null || authState.tenant == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sesi login tidak valid. Silakan login ulang.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Multi-tenant validation: Ensure all cart items belong to current tenant
+    final invalidItems = cart
+        .where((item) => item.product.tenantId != authState.tenant!.id)
+        .toList();
+    if (invalidItems.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              '${invalidItems.length} produk tidak valid. Silakan refresh dan coba lagi.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      ref.read(cartProvider.notifier).clear();
+      return;
+    }
 
     setState(() => _isCheckingOut = true);
 
@@ -567,7 +644,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ],
         ),
       );
-      if (proceedWithoutShift != true) return;
+      if (proceedWithoutShift != true) {
+        setState(() => _isCheckingOut = false);
+        return;
+      }
     }
 
     final taxEnabled = ref.read(taxEnabledProvider);
@@ -590,7 +670,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final total = subtotal + tax - effectiveDiscount;
 
     final confirmed = await _showPaymentDialog(total);
-    if (!confirmed) return;
+    if (!confirmed) {
+      setState(() => _isCheckingOut = false);
+      return;
+    }
 
     try {
       // Use repositories for consistent data operations
@@ -643,6 +726,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       final transaction = trans.Transaction(
         id: const Uuid().v4(),
         tenantId: authState.tenant!.id,
+        branchId: authState.user!
+            .branchId, // Multi-branch support: Associate with user's branch
         userId: authState.user!.id,
         shiftId: activeShift?.id, // Associate with active shift if exists
         discountId:
@@ -2064,7 +2149,7 @@ class _DiscountSectionState extends ConsumerState<_DiscountSection> {
   @override
   Widget build(BuildContext context) {
     final selectedDiscount = ref.watch(selectedDiscountProvider);
-    final activeDiscountsAsync = ref.watch(posActiveDiscountsProvider);
+    // Note: activeDiscountsAsync removed - using posBranchDiscountsProvider instead for multi-branch support
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2165,65 +2250,71 @@ class _DiscountSectionState extends ConsumerState<_DiscountSection> {
               ],
             ),
             const SizedBox(height: 8),
-            // Available discounts dropdown
-            activeDiscountsAsync.when(
-              data: (discounts) {
-                if (discounts.isEmpty) return const SizedBox.shrink();
-                final validDiscounts = discounts
-                    .where(
-                        (d) => !d.hasPromoCode) // Only show non-promo discounts
-                    .toList();
-                if (validDiscounts.isEmpty) return const SizedBox.shrink();
+            // Available discounts dropdown (branch-filtered for multi-branch support)
+            ref.watch(posBranchDiscountsProvider).when(
+                  data: (discounts) {
+                    if (discounts.isEmpty) return const SizedBox.shrink();
+                    final validDiscounts = discounts
+                        .where((d) =>
+                            !d.hasPromoCode) // Only show non-promo discounts
+                        .toList();
+                    if (validDiscounts.isEmpty) return const SizedBox.shrink();
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Atau pilih diskon:',
-                      style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
-                    ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: validDiscounts.map((d) {
-                        final meetsMin = d.meetsMinPurchase(widget.subtotal);
-                        return ActionChip(
-                          avatar: Icon(
-                            d.isPercentage ? Icons.percent : Icons.attach_money,
-                            size: 16,
-                            color:
-                                meetsMin ? AppTheme.primaryColor : Colors.grey,
-                          ),
-                          label: Text(
-                            d.isPercentage
-                                ? '${d.value.toStringAsFixed(0)}%'
-                                : 'Rp ${d.value.toStringAsFixed(0)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: meetsMin ? null : Colors.grey,
-                            ),
-                          ),
-                          onPressed: meetsMin
-                              ? () {
-                                  ref
-                                      .read(selectedDiscountProvider.notifier)
-                                      .state = d;
-                                  widget.onManualDiscountChanged(0);
-                                }
-                              : null,
-                          tooltip: meetsMin
-                              ? d.name
-                              : 'Min. Rp ${d.minPurchase?.toStringAsFixed(0) ?? 0}',
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                );
-              },
-              loading: () => const SizedBox.shrink(),
-              error: (_, __) => const SizedBox.shrink(),
-            ),
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Atau pilih diskon:',
+                          style: TextStyle(
+                              fontSize: 12, color: AppTheme.textMuted),
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: validDiscounts.map((d) {
+                            final meetsMin =
+                                d.meetsMinPurchase(widget.subtotal);
+                            return ActionChip(
+                              avatar: Icon(
+                                d.isPercentage
+                                    ? Icons.percent
+                                    : Icons.attach_money,
+                                size: 16,
+                                color: meetsMin
+                                    ? AppTheme.primaryColor
+                                    : Colors.grey,
+                              ),
+                              label: Text(
+                                d.isPercentage
+                                    ? '${d.value.toStringAsFixed(0)}%'
+                                    : 'Rp ${d.value.toStringAsFixed(0)}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: meetsMin ? null : Colors.grey,
+                                ),
+                              ),
+                              onPressed: meetsMin
+                                  ? () {
+                                      ref
+                                          .read(
+                                              selectedDiscountProvider.notifier)
+                                          .state = d;
+                                      widget.onManualDiscountChanged(0);
+                                    }
+                                  : null,
+                              tooltip: meetsMin
+                                  ? d.name
+                                  : 'Min. Rp ${d.minPurchase?.toStringAsFixed(0) ?? 0}',
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    );
+                  },
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                ),
             const SizedBox(height: 8),
             // Manual discount input
             Row(

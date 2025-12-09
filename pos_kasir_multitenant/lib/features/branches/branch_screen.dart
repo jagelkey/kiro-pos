@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/branch.dart';
 import '../../data/models/user.dart';
 import '../../shared/widgets/app_card.dart';
@@ -147,46 +148,64 @@ class BranchScreen extends ConsumerWidget {
   Widget _buildBody(
       BuildContext context, WidgetRef ref, AsyncValue<List<Branch>> state) {
     return state.when(
-      data: (branches) => _BranchList(branches: branches),
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
-              const SizedBox(height: 16),
-              Text(
-                'Gagal Memuat Cabang',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.textPrimary,
+      data: (branches) => Column(
+        children: [
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(child: _BranchList(branches: branches)),
+        ],
+      ),
+      loading: () => Column(
+        children: [
+          if (!kIsWeb) const OfflineIndicator(),
+          const Expanded(child: Center(child: CircularProgressIndicator())),
+        ],
+      ),
+      error: (e, _) => Column(
+        children: [
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline,
+                        size: 64, color: Colors.red.shade300),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Gagal Memuat Cabang',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      e.toString(),
+                      style: TextStyle(color: AppTheme.textMuted),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: () =>
+                          ref.read(branchListProvider.notifier).loadBranches(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Coba Lagi'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                e.toString(),
-                style: TextStyle(color: AppTheme.textMuted),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: () =>
-                    ref.read(branchListProvider.notifier).loadBranches(),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Coba Lagi'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -213,20 +232,39 @@ class _BranchList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (branches.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      return RefreshIndicator(
+        onRefresh: () => ref.read(branchListProvider.notifier).loadBranches(),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           children: [
-            Icon(Icons.store_outlined, size: 64, color: AppTheme.textMuted),
-            const SizedBox(height: 16),
-            Text(
-              'Belum ada cabang',
-              style: TextStyle(fontSize: 18, color: AppTheme.textMuted),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Tambahkan cabang untuk mengelola bisnis Anda',
-              style: TextStyle(color: AppTheme.textMuted),
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.6,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.store_outlined,
+                        size: 64, color: AppTheme.textMuted),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Belum ada cabang',
+                      style: TextStyle(fontSize: 18, color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Tambahkan cabang untuk mengelola bisnis Anda',
+                      style: TextStyle(color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 24),
+                    TextButton.icon(
+                      onPressed: () =>
+                          ref.read(branchListProvider.notifier).loadBranches(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh'),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -259,16 +297,21 @@ class _BranchList extends ConsumerWidget {
             ],
           ),
         ),
-        // List
+        // List with RefreshIndicator
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: branches.length,
-            itemBuilder: (context, index) => _BranchCard(
-              branch: branches[index],
-              onEdit: () => _showEditDialog(context, ref, branches[index]),
-              onDelete: () => _confirmDelete(context, ref, branches[index]),
-              onToggle: () => _toggleStatus(context, ref, branches[index]),
+          child: RefreshIndicator(
+            onRefresh: () =>
+                ref.read(branchListProvider.notifier).loadBranches(),
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: branches.length,
+              itemBuilder: (context, index) => _BranchCard(
+                branch: branches[index],
+                onEdit: () => _showEditDialog(context, ref, branches[index]),
+                onDelete: () => _confirmDelete(context, ref, branches[index]),
+                onToggle: () => _toggleStatus(context, ref, branches[index]),
+              ),
             ),
           ),
         ),
@@ -340,19 +383,16 @@ class _BranchList extends ConsumerWidget {
                       setState(() => isLoading = true);
                       try {
                         final authState = ref.read(authProvider);
-                        final provider =
-                            ref.read(branchListProvider.notifier).repository;
-                        // Pass ownerId for multi-tenant validation
-                        final result = await provider.deleteBranch(
-                          branch.id,
-                          ownerId: authState.user?.id,
-                        );
+                        // Use BranchListNotifier method with offline support
+                        final result = await ref
+                            .read(branchListProvider.notifier)
+                            .deleteBranch(
+                              branch.id,
+                              ownerId: authState.user?.id,
+                            );
                         if (context.mounted) {
                           Navigator.pop(context);
                           if (result.success) {
-                            ref
-                                .read(branchListProvider.notifier)
-                                .loadBranches();
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text('Cabang berhasil dihapus'),
@@ -400,11 +440,10 @@ class _BranchList extends ConsumerWidget {
 
   void _toggleStatus(BuildContext context, WidgetRef ref, Branch branch) async {
     try {
-      final provider = ref.read(branchListProvider.notifier).repository;
-      final result = branch.isActive
-          ? await provider.deactivateBranch(branch.id)
-          : await provider.activateBranch(branch.id);
-      ref.read(branchListProvider.notifier).loadBranches();
+      // Use BranchListNotifier method with offline support
+      final result = await ref
+          .read(branchListProvider.notifier)
+          .toggleStatus(branch.id, !branch.isActive);
 
       if (result.success) {
         if (context.mounted) {
@@ -795,10 +834,11 @@ class _BranchFormDialogState extends ConsumerState<_BranchFormDialog> {
         updatedAt: DateTime.now(),
       );
 
-      final provider = ref.read(branchListProvider.notifier).repository;
+      // Use BranchListNotifier methods with offline support
+      final notifier = ref.read(branchListProvider.notifier);
       final result = widget.branch != null
-          ? await provider.updateBranch(branch)
-          : await provider.createBranch(branch);
+          ? await notifier.updateBranch(branch)
+          : await notifier.createBranch(branch);
 
       if (mounted) {
         if (result.success) {

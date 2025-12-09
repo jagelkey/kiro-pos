@@ -13,6 +13,7 @@ import '../../data/models/tenant.dart';
 /// Service untuk export laporan ke berbagai format
 class ReportExporter {
   /// Export laporan ke Excel
+  /// Works offline - no network required
   static Future<String?> exportToExcel({
     required List<Transaction> transactions,
     required List<Expense> expenses,
@@ -25,6 +26,11 @@ class ReportExporter {
     String? branchName,
   }) async {
     try {
+      // Validate input data
+      if (tenant.id.isEmpty) {
+        throw Exception('Tenant tidak valid');
+      }
+
       final excel = Excel.createExcel();
 
       // Remove default sheet
@@ -55,7 +61,7 @@ class ReportExporter {
       // Save file
       final bytes = excel.encode();
       if (bytes == null) {
-        throw Exception('Gagal membuat file Excel');
+        throw Exception('Gagal membuat file Excel - encoding failed');
       }
 
       // Save to device
@@ -67,22 +73,29 @@ class ReportExporter {
         // For now, return the filename
         return fileName;
       } else {
-        // For mobile/desktop
+        // For mobile/desktop - works offline
         final directory = await getApplicationDocumentsDirectory();
         final fileName =
-            'Laporan_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.xlsx';
+            'Laporan_${tenant.name.replaceAll(RegExp(r'[^\w\s]'), '')}_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.xlsx';
         final filePath = '${directory.path}/$fileName';
         final file = File(filePath);
         await file.writeAsBytes(bytes);
+
+        // Verify file was created
+        if (!await file.exists()) {
+          throw Exception('File tidak berhasil disimpan');
+        }
+
         return filePath;
       }
     } catch (e) {
       debugPrint('Error exporting to Excel: $e');
-      return null;
+      rethrow; // Rethrow to let caller handle the error
     }
   }
 
   /// Export laporan ke PDF
+  /// Works offline - fonts are cached after first use
   static Future<String?> exportToPdf({
     required List<Transaction> transactions,
     required List<Expense> expenses,
@@ -95,11 +108,27 @@ class ReportExporter {
     String? branchName,
   }) async {
     try {
+      // Validate input data
+      if (tenant.id.isEmpty) {
+        throw Exception('Tenant tidak valid');
+      }
+
       final pdf = pw.Document();
 
       // Load font for Indonesian characters
-      final font = await PdfGoogleFonts.notoSansRegular();
-      final fontBold = await PdfGoogleFonts.notoSansBold();
+      // Note: Fonts are cached after first download, so works offline after initial use
+      pw.Font font;
+      pw.Font fontBold;
+
+      try {
+        font = await PdfGoogleFonts.notoSansRegular();
+        fontBold = await PdfGoogleFonts.notoSansBold();
+      } catch (e) {
+        debugPrint('Failed to load Google fonts, using default: $e');
+        // Fallback to default fonts if Google fonts fail (offline without cache)
+        font = pw.Font.helvetica();
+        fontBold = pw.Font.helveticaBold();
+      }
 
       // Add Summary Page
       pdf.addPage(
@@ -154,22 +183,29 @@ class ReportExporter {
         await Printing.sharePdf(bytes: bytes, filename: fileName);
         return fileName;
       } else {
-        // For mobile/desktop
+        // For mobile/desktop - works offline
         final directory = await getApplicationDocumentsDirectory();
         final fileName =
-            'Laporan_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.pdf';
+            'Laporan_${tenant.name.replaceAll(RegExp(r'[^\w\s]'), '')}_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.pdf';
         final filePath = '${directory.path}/$fileName';
         final file = File(filePath);
         await file.writeAsBytes(bytes);
+
+        // Verify file was created
+        if (!await file.exists()) {
+          throw Exception('File tidak berhasil disimpan');
+        }
+
         return filePath;
       }
     } catch (e) {
       debugPrint('Error exporting to PDF: $e');
-      return null;
+      rethrow; // Rethrow to let caller handle the error
     }
   }
 
   /// Print PDF directly
+  /// Works offline - uses system print dialog
   static Future<bool> printPdf({
     required List<Transaction> transactions,
     required List<Expense> expenses,
@@ -182,11 +218,25 @@ class ReportExporter {
     String? branchName,
   }) async {
     try {
+      // Validate input data
+      if (tenant.id.isEmpty) {
+        throw Exception('Tenant tidak valid');
+      }
+
       final pdf = pw.Document();
 
-      // Load font
-      final font = await PdfGoogleFonts.notoSansRegular();
-      final fontBold = await PdfGoogleFonts.notoSansBold();
+      // Load font with fallback for offline mode
+      pw.Font font;
+      pw.Font fontBold;
+
+      try {
+        font = await PdfGoogleFonts.notoSansRegular();
+        fontBold = await PdfGoogleFonts.notoSansBold();
+      } catch (e) {
+        debugPrint('Failed to load Google fonts for print, using default: $e');
+        font = pw.Font.helvetica();
+        fontBold = pw.Font.helveticaBold();
+      }
 
       // Add Summary Page
       pdf.addPage(
@@ -207,12 +257,26 @@ class ReportExporter {
         ),
       );
 
-      // Print
-      await Printing.layoutPdf(
+      // Add Transactions Page for print (if not too many)
+      if (transactions.isNotEmpty && transactions.length <= 100) {
+        pdf.addPage(
+          pw.MultiPage(
+            pageFormat: PdfPageFormat.a4,
+            build: (context) => [
+              _buildPdfTransactionsTable(transactions, font, fontBold),
+            ],
+          ),
+        );
+      }
+
+      // Print - uses system print dialog (works offline)
+      final result = await Printing.layoutPdf(
         onLayout: (format) async => pdf.save(),
+        name:
+            'Laporan_${tenant.name}_${DateFormat('yyyyMMdd').format(startDate)}',
       );
 
-      return true;
+      return result;
     } catch (e) {
       debugPrint('Error printing PDF: $e');
       return false;

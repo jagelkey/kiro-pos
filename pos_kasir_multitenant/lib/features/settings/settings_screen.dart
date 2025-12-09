@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../shared/widgets/app_card.dart';
 import '../auth/auth_provider.dart';
 import 'settings_provider.dart';
@@ -29,339 +31,355 @@ class SettingsScreen extends ConsumerWidget {
         backgroundColor: AppTheme.backgroundColor,
         elevation: 0,
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      body: Column(
         children: [
-          // Profile Card
-          _ProfileCard(
-            userName: user?.name ?? 'User',
-            userEmail: user?.email ?? '-',
-            userRole: user?.role.name ?? 'user',
-            storeName: tenant?.name ?? 'Toko',
-          ),
-          const SizedBox(height: 24),
-
-          // Store Info Section
-          _SectionTitle(
-            title: '🏪 Informasi Toko',
-            subtitle: canEditStore ? null : '(Hanya Owner yang dapat mengubah)',
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
               children: [
-                _SettingItem(
-                  icon: Icons.store,
-                  title: 'Nama Toko',
-                  value: tenant?.name ?? '-',
-                  onTap: canEditStore
-                      ? () => _showEditStoreNameDialog(
-                          context, ref, tenant?.name ?? '')
-                      : null,
-                  isDisabled: !canEditStore,
+                // Profile Card
+                _ProfileCard(
+                  userName: user?.name ?? 'User',
+                  userEmail: user?.email ?? '-',
+                  userRole: user?.role.name ?? 'user',
+                  storeName: tenant?.name ?? 'Toko',
                 ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.location_on,
-                  title: 'Alamat',
-                  value: tenant?.address ?? '-',
-                  onTap: canEditStore
-                      ? () => _showEditAddressDialog(
-                          context, ref, tenant?.address ?? '')
-                      : null,
-                  isDisabled: !canEditStore,
+                const SizedBox(height: 24),
+
+                // Store Info Section
+                _SectionTitle(
+                  title: '🏪 Informasi Toko',
+                  subtitle:
+                      canEditStore ? null : '(Hanya Owner yang dapat mengubah)',
                 ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.phone,
-                  title: 'Telepon',
-                  value: tenant?.phone ?? '-',
-                  onTap: canEditStore
-                      ? () => _showEditPhoneDialog(
-                          context, ref, tenant?.phone ?? '')
-                      : null,
-                  isDisabled: !canEditStore,
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      _SettingItem(
+                        icon: Icons.store,
+                        title: 'Nama Toko',
+                        value: tenant?.name ?? '-',
+                        onTap: canEditStore
+                            ? () => _showEditStoreNameDialog(
+                                context, ref, tenant?.name ?? '')
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.location_on,
+                        title: 'Alamat',
+                        value: tenant?.address ?? '-',
+                        onTap: canEditStore
+                            ? () => _showEditAddressDialog(
+                                context, ref, tenant?.address ?? '')
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.phone,
+                        title: 'Telepon',
+                        value: tenant?.phone ?? '-',
+                        onTap: canEditStore
+                            ? () => _showEditPhoneDialog(
+                                context, ref, tenant?.phone ?? '')
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.email,
+                        title: 'Email',
+                        value: tenant?.email ?? '-',
+                        onTap: canEditStore
+                            ? () => _showEditEmailDialog(
+                                context, ref, tenant?.email ?? '')
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                    ],
+                  ),
                 ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.email,
-                  title: 'Email',
-                  value: tenant?.email ?? '-',
-                  onTap: canEditStore
-                      ? () => _showEditEmailDialog(
-                          context, ref, tenant?.email ?? '')
-                      : null,
-                  isDisabled: !canEditStore,
+                const SizedBox(height: 24),
+
+                // Business Settings
+                _SectionTitle(
+                  title: '💰 Pengaturan Bisnis',
+                  subtitle: canEditBusiness
+                      ? null
+                      : '(Hanya Owner yang dapat mengubah)',
                 ),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      _SettingItem(
+                        icon: Icons.attach_money,
+                        title: 'Mata Uang',
+                        value: tenant?.currency ?? 'IDR',
+                        onTap: canEditBusiness
+                            ? () => _showCurrencyPicker(context, ref)
+                            : null,
+                        isDisabled: !canEditBusiness,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.percent,
+                        title: 'Pajak (PPN)',
+                        value:
+                            '${((tenant?.taxRate ?? 0) * 100).toStringAsFixed(0)}%',
+                        onTap: canEditBusiness
+                            ? () => _showTaxDialog(
+                                context, ref, tenant?.taxRate ?? 0)
+                            : null,
+                        isDisabled: !canEditBusiness,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.access_time,
+                        title: 'Zona Waktu',
+                        value: tenant?.timezone ?? 'Asia/Jakarta',
+                        onTap: canEditBusiness
+                            ? () => _showTimezonePicker(context, ref)
+                            : null,
+                        isDisabled: !canEditBusiness,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Printer Settings
+                _SectionTitle(title: '🖨️ Pengaturan Printer'),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      _SettingToggle(
+                        icon: Icons.print,
+                        title: 'Auto Print Struk',
+                        subtitle: 'Cetak struk otomatis setelah transaksi',
+                        value: appSettings.autoPrintReceipt,
+                        onChanged: (value) {
+                          ref
+                              .read(appSettingsProvider.notifier)
+                              .updateAutoPrint(value);
+                        },
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.bluetooth,
+                        title: 'Printer Bluetooth',
+                        value: appSettings.printerConnection,
+                        onTap: () => _showPrinterSettings(context),
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.receipt_long,
+                        title: 'Ukuran Kertas',
+                        value: appSettings.paperSize,
+                        onTap: () => _showPaperSizePicker(context, ref),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Notification Settings
+                _SectionTitle(title: '🔔 Notifikasi'),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      _SettingToggle(
+                        icon: Icons.notifications_active,
+                        title: 'Notifikasi Stok Rendah',
+                        subtitle: 'Peringatan saat stok hampir habis',
+                        value: appSettings.lowStockNotification,
+                        onChanged: (value) {
+                          ref
+                              .read(appSettingsProvider.notifier)
+                              .updateLowStockNotification(value);
+                        },
+                      ),
+                      const Divider(height: 1),
+                      _SettingToggle(
+                        icon: Icons.trending_up,
+                        title: 'Laporan Harian',
+                        subtitle: 'Kirim ringkasan penjualan harian',
+                        value: appSettings.dailyReportNotification,
+                        onChanged: (value) {
+                          ref
+                              .read(appSettingsProvider.notifier)
+                              .updateDailyReportNotification(value);
+                        },
+                      ),
+                      const Divider(height: 1),
+                      _SettingToggle(
+                        icon: Icons.volume_up,
+                        title: 'Suara Transaksi',
+                        subtitle: 'Bunyi saat transaksi berhasil',
+                        value: appSettings.transactionSound,
+                        onChanged: (value) {
+                          ref
+                              .read(appSettingsProvider.notifier)
+                              .updateTransactionSound(value);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Account Section
+                _SectionTitle(title: '👤 Akun'),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      _SettingItem(
+                        icon: Icons.person,
+                        title: 'Edit Profil',
+                        value: '',
+                        showArrow: true,
+                        onTap: () =>
+                            _showEditProfileDialog(context, user?.name ?? ''),
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.lock,
+                        title: 'Ubah Password',
+                        value: '',
+                        showArrow: true,
+                        onTap: () => _showChangePasswordDialog(context),
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.security,
+                        title: 'Keamanan',
+                        value: '',
+                        showArrow: true,
+                        onTap: () => _showSecuritySettings(context),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Data & Backup - Hanya Owner
+                _SectionTitle(
+                  title: '💾 Data & Backup',
+                  subtitle: canEditStore
+                      ? null
+                      : '(Hanya Owner yang dapat mengakses)',
+                ),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      _SettingItem(
+                        icon: Icons.cloud_upload,
+                        title: 'Backup Data',
+                        value: 'Terakhir: Hari ini',
+                        onTap: canEditStore
+                            ? () => _showBackupDialog(context)
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.cloud_download,
+                        title: 'Restore Data',
+                        value: '',
+                        showArrow: true,
+                        onTap: canEditStore
+                            ? () => _showRestoreDialog(context)
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.delete_forever,
+                        title: 'Hapus Semua Data',
+                        value: '',
+                        showArrow: true,
+                        isDestructive: true,
+                        onTap: canEditStore
+                            ? () => _showDeleteDataDialog(context)
+                            : null,
+                        isDisabled: !canEditStore,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // About Section
+                _SectionTitle(title: 'ℹ️ Tentang'),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    children: [
+                      const _SettingItem(
+                        icon: Icons.info,
+                        title: 'Versi Aplikasi',
+                        value: '1.0.0',
+                      ),
+                      const Divider(height: 1),
+                      const _SettingItem(
+                        icon: Icons.code,
+                        title: 'Build',
+                        value: '2024.12.01',
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.help,
+                        title: 'Bantuan',
+                        value: '',
+                        showArrow: true,
+                        onTap: () => _showHelpDialog(context),
+                      ),
+                      const Divider(height: 1),
+                      _SettingItem(
+                        icon: Icons.policy,
+                        title: 'Kebijakan Privasi',
+                        value: '',
+                        showArrow: true,
+                        onTap: () {},
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Logout Button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showLogoutDialog(context, ref),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.errorColor,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.logout),
+                    label: const Text(
+                      'Keluar dari Aplikasi',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 32),
               ],
             ),
           ),
-          const SizedBox(height: 24),
-
-          // Business Settings
-          _SectionTitle(
-            title: '💰 Pengaturan Bisnis',
-            subtitle:
-                canEditBusiness ? null : '(Hanya Owner yang dapat mengubah)',
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              children: [
-                _SettingItem(
-                  icon: Icons.attach_money,
-                  title: 'Mata Uang',
-                  value: tenant?.currency ?? 'IDR',
-                  onTap: canEditBusiness
-                      ? () => _showCurrencyPicker(context, ref)
-                      : null,
-                  isDisabled: !canEditBusiness,
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.percent,
-                  title: 'Pajak (PPN)',
-                  value:
-                      '${((tenant?.taxRate ?? 0) * 100).toStringAsFixed(0)}%',
-                  onTap: canEditBusiness
-                      ? () => _showTaxDialog(context, ref, tenant?.taxRate ?? 0)
-                      : null,
-                  isDisabled: !canEditBusiness,
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.access_time,
-                  title: 'Zona Waktu',
-                  value: tenant?.timezone ?? 'Asia/Jakarta',
-                  onTap: canEditBusiness
-                      ? () => _showTimezonePicker(context, ref)
-                      : null,
-                  isDisabled: !canEditBusiness,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Printer Settings
-          _SectionTitle(title: '🖨️ Pengaturan Printer'),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              children: [
-                _SettingToggle(
-                  icon: Icons.print,
-                  title: 'Auto Print Struk',
-                  subtitle: 'Cetak struk otomatis setelah transaksi',
-                  value: appSettings.autoPrintReceipt,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .updateAutoPrint(value);
-                  },
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.bluetooth,
-                  title: 'Printer Bluetooth',
-                  value: appSettings.printerConnection,
-                  onTap: () => _showPrinterSettings(context),
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.receipt_long,
-                  title: 'Ukuran Kertas',
-                  value: appSettings.paperSize,
-                  onTap: () => _showPaperSizePicker(context, ref),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Notification Settings
-          _SectionTitle(title: '🔔 Notifikasi'),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              children: [
-                _SettingToggle(
-                  icon: Icons.notifications_active,
-                  title: 'Notifikasi Stok Rendah',
-                  subtitle: 'Peringatan saat stok hampir habis',
-                  value: appSettings.lowStockNotification,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .updateLowStockNotification(value);
-                  },
-                ),
-                const Divider(height: 1),
-                _SettingToggle(
-                  icon: Icons.trending_up,
-                  title: 'Laporan Harian',
-                  subtitle: 'Kirim ringkasan penjualan harian',
-                  value: appSettings.dailyReportNotification,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .updateDailyReportNotification(value);
-                  },
-                ),
-                const Divider(height: 1),
-                _SettingToggle(
-                  icon: Icons.volume_up,
-                  title: 'Suara Transaksi',
-                  subtitle: 'Bunyi saat transaksi berhasil',
-                  value: appSettings.transactionSound,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .updateTransactionSound(value);
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Account Section
-          _SectionTitle(title: '👤 Akun'),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              children: [
-                _SettingItem(
-                  icon: Icons.person,
-                  title: 'Edit Profil',
-                  value: '',
-                  showArrow: true,
-                  onTap: () =>
-                      _showEditProfileDialog(context, user?.name ?? ''),
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.lock,
-                  title: 'Ubah Password',
-                  value: '',
-                  showArrow: true,
-                  onTap: () => _showChangePasswordDialog(context),
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.security,
-                  title: 'Keamanan',
-                  value: '',
-                  showArrow: true,
-                  onTap: () => _showSecuritySettings(context),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Data & Backup - Hanya Owner
-          _SectionTitle(
-            title: '💾 Data & Backup',
-            subtitle:
-                canEditStore ? null : '(Hanya Owner yang dapat mengakses)',
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              children: [
-                _SettingItem(
-                  icon: Icons.cloud_upload,
-                  title: 'Backup Data',
-                  value: 'Terakhir: Hari ini',
-                  onTap: canEditStore ? () => _showBackupDialog(context) : null,
-                  isDisabled: !canEditStore,
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.cloud_download,
-                  title: 'Restore Data',
-                  value: '',
-                  showArrow: true,
-                  onTap:
-                      canEditStore ? () => _showRestoreDialog(context) : null,
-                  isDisabled: !canEditStore,
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.delete_forever,
-                  title: 'Hapus Semua Data',
-                  value: '',
-                  showArrow: true,
-                  isDestructive: true,
-                  onTap: canEditStore
-                      ? () => _showDeleteDataDialog(context)
-                      : null,
-                  isDisabled: !canEditStore,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // About Section
-          _SectionTitle(title: 'ℹ️ Tentang'),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              children: [
-                const _SettingItem(
-                  icon: Icons.info,
-                  title: 'Versi Aplikasi',
-                  value: '1.0.0',
-                ),
-                const Divider(height: 1),
-                const _SettingItem(
-                  icon: Icons.code,
-                  title: 'Build',
-                  value: '2024.12.01',
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.help,
-                  title: 'Bantuan',
-                  value: '',
-                  showArrow: true,
-                  onTap: () => _showHelpDialog(context),
-                ),
-                const Divider(height: 1),
-                _SettingItem(
-                  icon: Icons.policy,
-                  title: 'Kebijakan Privasi',
-                  value: '',
-                  showArrow: true,
-                  onTap: () {},
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Logout Button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _showLogoutDialog(context, ref),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.errorColor,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              icon: const Icon(Icons.logout),
-              label: const Text(
-                'Keluar dari Aplikasi',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ),
-          const SizedBox(height: 32),
         ],
       ),
     );

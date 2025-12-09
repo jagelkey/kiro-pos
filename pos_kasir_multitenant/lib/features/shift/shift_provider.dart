@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/config/app_config.dart';
+import '../../core/services/sync_manager.dart';
 import '../../data/models/shift.dart';
 import '../../data/models/user.dart';
 import '../../data/models/transaction.dart';
@@ -132,6 +134,114 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
     loadActiveShift();
   }
 
+  /// Check network connectivity
+  Future<bool> _checkConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return _checkConnectivityResults(results);
+    } catch (e) {
+      debugPrint('Connectivity check failed: $e');
+      return true; // Assume online if check fails
+    }
+  }
+
+  /// Helper function to check connectivity results
+  bool _checkConnectivityResults(dynamic results) {
+    if (results is List<ConnectivityResult>) {
+      return results.isNotEmpty &&
+          !results.every((r) => r == ConnectivityResult.none);
+    } else if (results is ConnectivityResult) {
+      return results != ConnectivityResult.none;
+    }
+    return true; // Assume online if unknown type
+  }
+
+  /// Validates tenant and returns tenantId or throws exception
+  String _validateTenant() {
+    final authState = ref.read(authProvider);
+    if (authState.tenant == null) {
+      throw Exception('Tenant tidak ditemukan. Silakan login ulang.');
+    }
+    final tenantId = authState.tenant!.id;
+    if (tenantId.isEmpty) {
+      throw Exception('ID Tenant tidak valid');
+    }
+    return tenantId;
+  }
+
+  /// Validates user and returns userId or throws exception
+  String _validateUser() {
+    final authState = ref.read(authProvider);
+    if (authState.user == null) {
+      throw Exception('User tidak ditemukan. Silakan login ulang.');
+    }
+    final userId = authState.user!.id;
+    if (userId.isEmpty) {
+      throw Exception('ID User tidak valid');
+    }
+    return userId;
+  }
+
+  /// Format error message for user-friendly display
+  String _formatErrorMessage(dynamic error) {
+    final errorStr = error.toString().toLowerCase();
+
+    // Network errors
+    if (errorStr.contains('socketexception') ||
+        errorStr.contains('connection refused') ||
+        errorStr.contains('network') ||
+        errorStr.contains('timeout') ||
+        errorStr.contains('host lookup')) {
+      return 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
+    }
+
+    // Tenant errors
+    if (errorStr.contains('tenant')) {
+      return 'Tenant tidak ditemukan. Silakan login ulang.';
+    }
+
+    // Auth errors
+    if (errorStr.contains('unauthorized') || errorStr.contains('auth')) {
+      return 'Sesi telah berakhir. Silakan login ulang.';
+    }
+
+    // Shift specific errors
+    if (errorStr.contains('shift aktif')) {
+      return 'Anda sudah memiliki shift aktif. Silakan akhiri shift terlebih dahulu.';
+    }
+    if (errorStr.contains('tidak ada shift')) {
+      return 'Tidak ada shift aktif untuk diakhiri.';
+    }
+
+    // Database errors
+    if (errorStr.contains('database') || errorStr.contains('sqlite')) {
+      return 'Gagal mengakses data lokal. Coba restart aplikasi.';
+    }
+
+    return error.toString().replaceAll('Exception: ', '');
+  }
+
+  /// Queue operation for sync when back online
+  Future<void> _queueForSync(String operation, Shift shift) async {
+    if (kIsWeb) return; // No sync queue for web
+
+    try {
+      final syncOp = SyncOperation(
+        id: '${shift.id}-$operation-${DateTime.now().millisecondsSinceEpoch}',
+        table: 'shifts',
+        type: operation == 'insert'
+            ? SyncOperationType.insert
+            : operation == 'update'
+                ? SyncOperationType.update
+                : SyncOperationType.delete,
+        data: shift.toMap(),
+      );
+      await SyncManager.instance.queueOperation(syncOp);
+    } catch (e) {
+      debugPrint('Failed to queue sync operation: $e');
+    }
+  }
+
   Future<void> loadActiveShift() async {
     state = const AsyncValue.loading();
     try {
@@ -151,8 +261,10 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
         return;
       }
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudShiftRepositoryProvider);
           final shift = await cloudRepo.getActiveShift(userId);
@@ -164,12 +276,17 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
         }
       }
 
-      final repository = ref.read(shiftRepositoryProvider);
-      final shift = await repository.getActiveShift(tenantId, userId);
-      state = AsyncValue.data(shift);
+      // Fallback to local database
+      if (!kIsWeb) {
+        final repository = ref.read(shiftRepositoryProvider);
+        final shift = await repository.getActiveShift(tenantId, userId);
+        state = AsyncValue.data(shift);
+      } else {
+        state = const AsyncValue.data(null);
+      }
     } catch (e, stack) {
       debugPrint('Error loading active shift: $e');
-      state = AsyncValue.error(e, stack);
+      state = AsyncValue.error(_formatErrorMessage(e), stack);
     }
   }
 
@@ -180,28 +297,16 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
   /// Requirements 13.1: Record shift start time and opening cash
   Future<void> startShift(double openingCash) async {
     try {
-      final authState = ref.read(authProvider);
-      if (authState.tenant == null || authState.user == null) {
-        throw Exception('User tidak terautentikasi. Silakan login ulang.');
-      }
-
-      final tenantId = authState.tenant!.id;
-      final userId = authState.user!.id;
-
-      // Validate IDs
-      if (tenantId.isEmpty) {
-        throw Exception('ID Tenant tidak valid');
-      }
-      if (userId.isEmpty) {
-        throw Exception('ID User tidak valid');
-      }
+      // Validate tenant and user
+      final tenantId = _validateTenant();
+      final userId = _validateUser();
 
       // Validate opening cash
       if (openingCash < 0) {
         throw Exception('Kas awal tidak boleh negatif');
       }
       if (openingCash > 999999999) {
-        throw Exception('Kas awal melebihi batas maksimal');
+        throw Exception('Kas awal melebihi batas maksimal (Rp 999.999.999)');
       }
 
       final shift = Shift(
@@ -214,8 +319,10 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
         createdAt: DateTime.now(),
       );
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudShiftRepositoryProvider);
           final createdShift = await cloudRepo.createShift(shift);
@@ -224,21 +331,33 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
           return;
         } catch (e) {
           debugPrint('Cloud shift create failed, falling back to local: $e');
+          // Continue to local fallback
         }
       }
 
-      final repository = ref.read(shiftRepositoryProvider);
-      final result = await repository.startShift(shift);
-      if (!result.success) {
-        throw Exception(result.error ?? 'Gagal memulai shift');
-      }
+      // Local database (offline mode or cloud failed)
+      if (!kIsWeb) {
+        final repository = ref.read(shiftRepositoryProvider);
+        final result = await repository.startShift(shift);
+        if (!result.success) {
+          throw Exception(result.error ?? 'Gagal memulai shift');
+        }
 
-      state = AsyncValue.data(result.data);
-      // Refresh shift history
-      ref.read(shiftHistoryProvider.notifier).loadShiftHistory();
+        state = AsyncValue.data(result.data);
+
+        // Queue for sync when online (Android only)
+        if (AppConfig.useSupabase && result.data != null) {
+          await _queueForSync('insert', result.data!);
+        }
+
+        // Refresh shift history
+        ref.read(shiftHistoryProvider.notifier).loadShiftHistory();
+      } else {
+        throw Exception('Tidak dapat memulai shift. Periksa koneksi internet.');
+      }
     } catch (e) {
       debugPrint('Error starting shift: $e');
-      rethrow;
+      throw Exception(_formatErrorMessage(e));
     }
   }
 
@@ -251,22 +370,15 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
         throw Exception('Tidak ada shift aktif untuk diakhiri');
       }
 
-      final authState = ref.read(authProvider);
-      if (authState.tenant == null) {
-        throw Exception('User tidak terautentikasi. Silakan login ulang.');
-      }
-
-      final tenantId = authState.tenant!.id;
-      if (tenantId.isEmpty) {
-        throw Exception('ID Tenant tidak valid');
-      }
+      // Validate tenant
+      final tenantId = _validateTenant();
 
       // Validate closing cash
       if (closingCash < 0) {
         throw Exception('Kas akhir tidak boleh negatif');
       }
       if (closingCash > 999999999) {
-        throw Exception('Kas akhir melebihi batas maksimal');
+        throw Exception('Kas akhir melebihi batas maksimal (Rp 999.999.999)');
       }
 
       // Calculate expected cash based on transactions during shift
@@ -279,8 +391,14 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
         throw Exception('Catatan wajib diisi jika ada selisih kas');
       }
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+
+      // Determine shift status based on variance
+      final status =
+          variance.abs() > 0.01 ? ShiftStatus.flagged : ShiftStatus.closed;
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudShiftRepositoryProvider);
           final updatedShift = Shift(
@@ -292,9 +410,9 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
             openingCash: currentShift.openingCash,
             closingCash: closingCash,
             expectedCash: expectedCash,
-            variance: closingCash - expectedCash,
+            variance: variance,
             varianceNote: varianceNote,
-            status: ShiftStatus.closed,
+            status: status,
             createdAt: currentShift.createdAt,
           );
           await cloudRepo.updateShift(updatedShift);
@@ -303,28 +421,41 @@ class ActiveShiftNotifier extends StateNotifier<AsyncValue<Shift?>> {
           return;
         } catch (e) {
           debugPrint('Cloud shift end failed, falling back to local: $e');
+          // Continue to local fallback
         }
       }
 
-      final repository = ref.read(shiftRepositoryProvider);
-      final result = await repository.endShift(
-        currentShift.id,
-        closingCash,
-        expectedCash,
-        varianceNote: varianceNote,
-        tenantId: tenantId, // Pass tenantId for validation
-      );
+      // Local database (offline mode or cloud failed)
+      if (!kIsWeb) {
+        final repository = ref.read(shiftRepositoryProvider);
+        final result = await repository.endShift(
+          currentShift.id,
+          closingCash,
+          expectedCash,
+          varianceNote: varianceNote,
+          tenantId: tenantId, // Pass tenantId for validation
+        );
 
-      if (!result.success) {
-        throw Exception(result.error ?? 'Gagal mengakhiri shift');
+        if (!result.success) {
+          throw Exception(result.error ?? 'Gagal mengakhiri shift');
+        }
+
+        state = const AsyncValue.data(null);
+
+        // Queue for sync when online (Android only)
+        if (AppConfig.useSupabase && result.data != null) {
+          await _queueForSync('update', result.data!);
+        }
+
+        // Refresh shift history
+        ref.read(shiftHistoryProvider.notifier).loadShiftHistory();
+      } else {
+        throw Exception(
+            'Tidak dapat mengakhiri shift. Periksa koneksi internet.');
       }
-
-      state = const AsyncValue.data(null);
-      // Refresh shift history
-      ref.read(shiftHistoryProvider.notifier).loadShiftHistory();
     } catch (e) {
       debugPrint('Error ending shift: $e');
-      rethrow;
+      throw Exception(_formatErrorMessage(e));
     }
   }
 
@@ -420,6 +551,45 @@ class ShiftHistoryNotifier extends StateNotifier<AsyncValue<List<Shift>>> {
     loadShiftHistory();
   }
 
+  /// Check network connectivity
+  Future<bool> _checkConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return _checkConnectivityResults(results);
+    } catch (e) {
+      return true; // Assume online if check fails
+    }
+  }
+
+  /// Helper function to check connectivity results
+  bool _checkConnectivityResults(dynamic results) {
+    if (results is List<ConnectivityResult>) {
+      return results.isNotEmpty &&
+          !results.every((r) => r == ConnectivityResult.none);
+    } else if (results is ConnectivityResult) {
+      return results != ConnectivityResult.none;
+    }
+    return true; // Assume online if unknown type
+  }
+
+  /// Format error message for user-friendly display
+  String _formatErrorMessage(dynamic error) {
+    final errorStr = error.toString().toLowerCase();
+
+    if (errorStr.contains('socketexception') ||
+        errorStr.contains('connection refused') ||
+        errorStr.contains('network') ||
+        errorStr.contains('timeout')) {
+      return 'Tidak dapat terhubung ke server. Menampilkan data lokal.';
+    }
+
+    if (errorStr.contains('tenant')) {
+      return 'Tenant tidak ditemukan. Silakan login ulang.';
+    }
+
+    return 'Gagal memuat riwayat shift. Silakan coba lagi.';
+  }
+
   Future<void> loadShiftHistory({DateTime? from, DateTime? to}) async {
     state = const AsyncValue.loading();
     try {
@@ -436,8 +606,10 @@ class ShiftHistoryNotifier extends StateNotifier<AsyncValue<List<Shift>>> {
         return;
       }
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudShiftRepositoryProvider);
           var shifts = await cloudRepo.getShifts(tenantId);
@@ -456,49 +628,59 @@ class ShiftHistoryNotifier extends StateNotifier<AsyncValue<List<Shift>>> {
             shifts = shifts.where((s) => !s.startTime.isAfter(to)).toList();
           }
 
+          // Sort by start time descending
+          shifts.sort((a, b) => b.startTime.compareTo(a.startTime));
+
           state = AsyncValue.data(shifts);
           return;
         } catch (e) {
           debugPrint(
               'Cloud shift history load failed, falling back to local: $e');
+          // Continue to local fallback
         }
       }
 
-      final repository = ref.read(shiftRepositoryProvider);
-      List<Shift> shifts;
+      // Fallback to local database
+      if (!kIsWeb) {
+        final repository = ref.read(shiftRepositoryProvider);
+        List<Shift> shifts;
 
-      // Role-based filtering: Cashier only sees their own shifts
-      // Owner/Admin can see all shifts
-      final user = authState.user;
-      if (user != null && user.role == UserRole.cashier) {
-        // Cashier only sees their own shifts
-        if (user.id.isEmpty) {
-          debugPrint('Invalid user ID');
-          state = const AsyncValue.data([]);
-          return;
+        // Role-based filtering: Cashier only sees their own shifts
+        // Owner/Admin can see all shifts
+        final user = authState.user;
+        if (user != null && user.role == UserRole.cashier) {
+          // Cashier only sees their own shifts
+          if (user.id.isEmpty) {
+            debugPrint('Invalid user ID');
+            state = const AsyncValue.data([]);
+            return;
+          }
+          shifts = await repository.getShiftsByUser(tenantId, user.id);
+        } else {
+          // Owner/Admin sees all shifts
+          shifts = await repository.getShiftHistory(
+            tenantId,
+            from: from,
+            to: to,
+          );
         }
-        shifts = await repository.getShiftsByUser(tenantId, user.id);
+
+        // Apply date filter if provided (for user-specific queries)
+        if (from != null) {
+          shifts = shifts.where((s) => !s.startTime.isBefore(from)).toList();
+        }
+        if (to != null) {
+          shifts = shifts.where((s) => !s.startTime.isAfter(to)).toList();
+        }
+
+        state = AsyncValue.data(shifts);
       } else {
-        // Owner/Admin sees all shifts
-        shifts = await repository.getShiftHistory(
-          tenantId,
-          from: from,
-          to: to,
-        );
+        // Web without cloud - show empty
+        state = const AsyncValue.data([]);
       }
-
-      // Apply date filter if provided
-      if (from != null) {
-        shifts = shifts.where((s) => !s.startTime.isBefore(from)).toList();
-      }
-      if (to != null) {
-        shifts = shifts.where((s) => !s.startTime.isAfter(to)).toList();
-      }
-
-      state = AsyncValue.data(shifts);
     } catch (e, stack) {
       debugPrint('Error loading shift history: $e');
-      state = AsyncValue.error(e, stack);
+      state = AsyncValue.error(_formatErrorMessage(e), stack);
     }
   }
 

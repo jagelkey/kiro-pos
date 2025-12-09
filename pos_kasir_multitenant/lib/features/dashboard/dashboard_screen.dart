@@ -72,21 +72,35 @@ class DashboardScreen extends ConsumerWidget {
 
     // Show error state with retry option
     if (dashboardData.error != null) {
+      // Determine if this is a network error for better UX
+      final isNetworkError =
+          dashboardData.error!.toLowerCase().contains('network') ||
+              dashboardData.error!.toLowerCase().contains('connection') ||
+              dashboardData.error!.toLowerCase().contains('timeout');
+
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
+              Icon(
+                isNetworkError ? Icons.wifi_off : Icons.error_outline,
+                size: 64,
+                color: isNetworkError
+                    ? Colors.orange.shade300
+                    : Colors.red.shade300,
+              ),
               const SizedBox(height: 16),
               Text(
-                'Gagal memuat data',
+                isNetworkError ? 'Tidak ada koneksi' : 'Gagal memuat data',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 8),
               Text(
-                dashboardData.error!,
+                isNetworkError
+                    ? 'Periksa koneksi internet Anda dan coba lagi'
+                    : dashboardData.error!,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.textMuted),
               ),
@@ -163,6 +177,35 @@ class DashboardScreen extends ConsumerWidget {
 
               // Recent Transactions
               _buildRecentTransactions(context, dashboardData),
+
+              // Data freshness indicator (for debugging/transparency)
+              if (!dashboardData.isOnline) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          color: Colors.blue.shade700, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Data ditampilkan dari penyimpanan lokal',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         );
@@ -451,42 +494,54 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Use flexible layout to prevent overflow
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisSize: MainAxisSize.max,
             children: [
-              Expanded(
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.bodySmall,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                  Icon(icon, color: color, size: 18),
+                ],
+              ),
+              const Spacer(),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
                 child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodySmall,
-                  overflow: TextOverflow.ellipsis,
+                  value,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: color,
+                        fontWeight: FontWeight.bold,
+                      ),
+                  maxLines: 1,
                 ),
               ),
-              Icon(icon, color: color, size: 20),
-            ],
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.bold,
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle!,
+                  style: TextStyle(
+                      fontSize: 10, color: color.withValues(alpha: 0.8)),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-            overflow: TextOverflow.ellipsis,
-          ),
-          if (subtitle != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              subtitle!,
-              style:
-                  TextStyle(fontSize: 10, color: color.withValues(alpha: 0.8)),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ],
+              ],
+            ],
+          );
+        },
       ),
     );
   }

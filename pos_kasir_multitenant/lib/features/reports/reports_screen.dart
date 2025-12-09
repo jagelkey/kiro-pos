@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/services/report_exporter.dart';
 import '../../data/models/transaction.dart';
@@ -245,6 +247,14 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
       ),
       body: Column(
         children: [
+          // Offline indicator at top of body (more visible)
+          // Uses forceShow when provider indicates offline mode
+          if (!kIsWeb)
+            OfflineIndicator(
+              message: 'Mode Offline - Data dari penyimpanan lokal',
+              forceShow: reportsData.isOffline,
+              showSyncBadge: false, // Reports are read-only, no sync needed
+            ),
           // Branch filter indicator
           if (reportsData.selectedBranchId != null)
             Container(
@@ -589,6 +599,26 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
     );
   }
 
+  /// Format error message for user-friendly display
+  String _formatExportError(dynamic error) {
+    final errorStr = error.toString().toLowerCase();
+
+    if (errorStr.contains('permission') || errorStr.contains('denied')) {
+      return 'Tidak ada izin untuk menyimpan file. Periksa pengaturan aplikasi.';
+    }
+    if (errorStr.contains('storage') || errorStr.contains('space')) {
+      return 'Penyimpanan penuh. Hapus beberapa file untuk melanjutkan.';
+    }
+    if (errorStr.contains('font') || errorStr.contains('pdf')) {
+      return 'Gagal membuat PDF. Coba lagi atau gunakan format Excel.';
+    }
+    if (errorStr.contains('network') || errorStr.contains('connection')) {
+      return 'Koneksi terputus. Export tetap bisa dilakukan secara offline.';
+    }
+
+    return 'Gagal membuat file. Silakan coba lagi.';
+  }
+
   Future<void> _performExport(
       BuildContext context, String format, ReportsData data) async {
     final authState = ref.read(authProvider);
@@ -598,8 +628,21 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Tenant tidak ditemukan'),
+            content: Text('Tenant tidak ditemukan. Silakan login ulang.'),
             backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Validate data before export
+    if (data.transactions.isEmpty && data.expenses.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Tidak ada data untuk di-export'),
+            backgroundColor: AppTheme.warningColor,
           ),
         );
       }
@@ -615,7 +658,7 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
           children: [
             const CircularProgressIndicator(),
             const SizedBox(width: 16),
-            Text('Membuat file $format...'),
+            Expanded(child: Text('Membuat file $format...')),
           ],
         ),
       ),
@@ -634,7 +677,8 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
           startDate: data.startDate,
           endDate: data.endDate,
           tenant: tenant,
-          branchName: data.selectedBranchName,
+          branchName:
+              data.selectedBranchId != null ? data.selectedBranchName : null,
         );
       } else if (format == 'PDF') {
         filePath = await ReportExporter.exportToPdf(
@@ -646,7 +690,8 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
           startDate: data.startDate,
           endDate: data.endDate,
           tenant: tenant,
-          branchName: data.selectedBranchName,
+          branchName:
+              data.selectedBranchId != null ? data.selectedBranchName : null,
         );
       }
 
@@ -655,6 +700,10 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
       Navigator.pop(context); // Close loading dialog
 
       if (filePath != null) {
+        // Capture filePath in local variable for closure
+        final savedFilePath = filePath;
+        final fileName = savedFilePath.split('/').last;
+
         // Show success dialog with share option
         if (context.mounted) {
           showDialog(
@@ -686,7 +735,7 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            filePath?.split('/').last ?? 'file',
+                            fileName,
                             style: const TextStyle(fontSize: 12),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -707,28 +756,27 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
                   child: const Text('Tutup'),
                 ),
                 ElevatedButton.icon(
-                  onPressed: filePath != null
-                      ? () async {
-                          Navigator.pop(dialogContext);
-                          try {
-                            final file = XFile(filePath!);
-                            await Share.shareXFiles(
-                              [file],
-                              subject:
-                                  'Laporan POS - ${DateFormat('dd MMM yyyy').format(data.startDate)}',
-                            );
-                          } catch (e) {
-                            if (dialogContext.mounted) {
-                              ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                SnackBar(
-                                  content: Text('Gagal share file: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          }
-                        }
-                      : null,
+                  onPressed: () async {
+                    Navigator.pop(dialogContext);
+                    try {
+                      final file = XFile(savedFilePath);
+                      await Share.shareXFiles(
+                        [file],
+                        subject:
+                            'Laporan POS - ${DateFormat('dd MMM yyyy').format(data.startDate)}',
+                      );
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                                'Gagal membagikan file: ${_formatExportError(e)}'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
+                  },
                   icon: const Icon(Icons.share),
                   label: const Text('Bagikan'),
                 ),
@@ -742,13 +790,21 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
     } catch (e) {
       if (!context.mounted) return;
 
-      Navigator.pop(context); // Close loading dialog
+      // Try to close loading dialog if still open
+      try {
+        Navigator.pop(context);
+      } catch (_) {}
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error: $e'),
+          content: Text(_formatExportError(e)),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Coba Lagi',
+            textColor: Colors.white,
+            onPressed: () => _performExport(context, format, data),
+          ),
         ),
       );
     }
@@ -762,8 +818,21 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Tenant tidak ditemukan'),
+            content: Text('Tenant tidak ditemukan. Silakan login ulang.'),
             backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Validate data before print
+    if (data.transactions.isEmpty && data.expenses.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Tidak ada data untuk dicetak'),
+            backgroundColor: AppTheme.warningColor,
           ),
         );
       }
@@ -779,7 +848,7 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
           children: [
             CircularProgressIndicator(),
             SizedBox(width: 16),
-            Text('Menyiapkan dokumen...'),
+            Expanded(child: Text('Menyiapkan dokumen...')),
           ],
         ),
       ),
@@ -795,31 +864,49 @@ class _ReportsScreenState extends ConsumerState<_ReportsScreenContent>
         startDate: data.startDate,
         endDate: data.endDate,
         tenant: tenant,
-        branchName: data.selectedBranchName,
+        branchName:
+            data.selectedBranchId != null ? data.selectedBranchName : null,
       );
 
       if (!context.mounted) return;
 
-      Navigator.pop(context); // Close loading dialog
+      // Try to close loading dialog
+      try {
+        Navigator.pop(context);
+      } catch (_) {}
 
       if (!success) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Gagal mencetak laporan'),
+          SnackBar(
+            content: const Text(
+                'Gagal mencetak laporan. Pastikan printer tersedia.'),
             backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'Coba Lagi',
+              textColor: Colors.white,
+              onPressed: () => _printReport(context, data),
+            ),
           ),
         );
       }
     } catch (e) {
       if (!context.mounted) return;
 
-      Navigator.pop(context); // Close loading dialog
+      // Try to close loading dialog
+      try {
+        Navigator.pop(context);
+      } catch (_) {}
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error: $e'),
+          content: Text(_formatExportError(e)),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Coba Lagi',
+            textColor: Colors.white,
+            onPressed: () => _printReport(context, data),
+          ),
         ),
       );
     }
@@ -2002,102 +2089,103 @@ class _ExpensesTab extends StatelessWidget {
             ],
           ),
         ),
-        // Category breakdown
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Breakdown per Kategori',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              ...sortedCategories.map((entry) {
-                final percentage = totalExpenses > 0
-                    ? (entry.value / totalExpenses * 100)
-                    : 0.0;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Text(_getCategoryEmoji(entry.key),
-                              style: const TextStyle(fontSize: 20)),
-                          const SizedBox(width: 12),
-                          Expanded(
-                              child: Text(entry.key,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w500))),
-                          Text(_formatCurrency(entry.value),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 50,
-                            child: Text('${percentage.toStringAsFixed(1)}%',
-                                style: TextStyle(
-                                    fontSize: 12, color: AppTheme.textMuted),
-                                textAlign: TextAlign.right),
+        // Category breakdown - wrapped in Expanded to prevent overflow
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Breakdown per Kategori',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                ...sortedCategories.map((entry) {
+                  final percentage = totalExpenses > 0
+                      ? (entry.value / totalExpenses * 100)
+                      : 0.0;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Text(_getCategoryEmoji(entry.key),
+                                style: const TextStyle(fontSize: 20)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Text(entry.key,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w500))),
+                            Text(_formatCurrency(entry.value),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 50,
+                              child: Text('${percentage.toStringAsFixed(1)}%',
+                                  style: TextStyle(
+                                      fontSize: 12, color: AppTheme.textMuted),
+                                  textAlign: TextAlign.right),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: totalExpenses > 0
+                                ? entry.value / totalExpenses
+                                : 0,
+                            backgroundColor: AppTheme.borderColor,
+                            valueColor: AlwaysStoppedAnimation(
+                                _getCategoryColor(entry.key)),
+                            minHeight: 6,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: totalExpenses > 0
-                              ? entry.value / totalExpenses
-                              : 0,
-                          backgroundColor: AppTheme.borderColor,
-                          valueColor: AlwaysStoppedAnimation(
-                              _getCategoryColor(entry.key)),
-                          minHeight: 6,
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                // Expense list items (inline, no separate ListView)
+                const SizedBox(height: 16),
+                Text('Daftar Biaya',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                ...expenses.map((expense) => Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: _getCategoryColor(expense.category)
+                                .withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Center(
+                              child: Text(_getCategoryEmoji(expense.category),
+                                  style: const TextStyle(fontSize: 18))),
+                        ),
+                        title: Text(expense.category,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text(expense.description ??
+                            DateFormat('dd MMM yyyy').format(expense.date)),
+                        trailing: Text(
+                          _formatCurrency(expense.amount),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, color: Colors.red),
                         ),
                       ),
-                    ],
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
-        // Expense list
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: expenses.length,
-            itemBuilder: (context, index) {
-              final expense = expenses[index];
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: _getCategoryColor(expense.category)
-                          .withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                        child: Text(_getCategoryEmoji(expense.category),
-                            style: const TextStyle(fontSize: 18))),
-                  ),
-                  title: Text(expense.category,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(expense.description ??
-                      DateFormat('dd MMM yyyy').format(expense.date)),
-                  trailing: Text(
-                    _formatCurrency(expense.amount),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.red),
-                  ),
-                ),
-              );
-            },
+                    )),
+              ],
+            ),
           ),
         ),
       ],

@@ -155,6 +155,7 @@ class TransactionRepository {
 
   /// Create a new transaction
   /// Returns RepositoryResult with the created transaction or error
+  /// Supports offline-first: saves locally first, then syncs to cloud
   Future<RepositoryResult<Transaction>> createTransaction(
       Transaction transaction) async {
     try {
@@ -169,37 +170,38 @@ class TransactionRepository {
       if (transaction.paymentMethod.trim().isEmpty) {
         return RepositoryResult.failure('Payment method is required');
       }
-
-      // Try cloud first if enabled - sync transaction to Supabase
-      if (AppConfig.useSupabase) {
-        try {
-          final created = await _cloudRepository.createTransaction(transaction);
-          // Also save locally for offline access
-          if (!kIsWeb) {
-            final db = await _db.database;
-            await db.insert('transactions', _transactionToMap(transaction));
-          }
-          return RepositoryResult.success(created);
-        } catch (e) {
-          debugPrint('Cloud transaction create failed, saving locally: $e');
-          // Continue to save locally even if cloud fails
-        }
+      // Multi-tenant validation
+      if (transaction.tenantId.isEmpty) {
+        return RepositoryResult.failure('Tenant ID is required');
       }
 
-      // Validate transaction ID uniqueness (only for local)
+      // Validate transaction ID uniqueness
       final existingTransaction = await getTransaction(transaction.id);
       if (existingTransaction != null) {
         return RepositoryResult.failure(
             'Transaction with this ID already exists');
       }
 
+      // Save locally first (offline-first approach)
       if (kIsWeb) {
         _webTransactions.add(transaction);
-        return RepositoryResult.success(transaction);
+      } else {
+        final db = await _db.database;
+        await db.insert('transactions', _transactionToMap(transaction));
       }
 
-      final db = await _db.database;
-      await db.insert('transactions', _transactionToMap(transaction));
+      // Try to sync to cloud if enabled
+      if (AppConfig.useSupabase) {
+        try {
+          await _cloudRepository.createTransaction(transaction);
+        } catch (e) {
+          debugPrint('Cloud transaction sync failed (will retry later): $e');
+          // Transaction is already saved locally, will sync when online
+          // Queue for sync if we have sync manager
+          // Note: SyncManager should be called from the UI layer
+        }
+      }
+
       return RepositoryResult.success(transaction);
     } catch (e) {
       debugPrint('Error creating transaction: $e');
@@ -435,6 +437,7 @@ class TransactionRepository {
     return Transaction(
       id: map['id'] as String,
       tenantId: map['tenant_id'] as String,
+      branchId: map['branch_id'] as String?,
       userId: map['user_id'] as String,
       shiftId: map['shift_id'] as String?,
       discountId: map['discount_id'] as String?,
@@ -453,6 +456,7 @@ class TransactionRepository {
     return {
       'id': transaction.id,
       'tenant_id': transaction.tenantId,
+      'branch_id': transaction.branchId,
       'user_id': transaction.userId,
       'shift_id': transaction.shiftId,
       'discount_id': transaction.discountId,

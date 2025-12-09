@@ -201,27 +201,50 @@ class _UsersScreenState extends ConsumerState<_UsersScreenContent> {
                       child: _UsersSummaryCard(users: allUsers),
                     ),
 
-                    // Users List
+                    // Users List with RefreshIndicator
                     Expanded(
                       child: users.isEmpty
-                          ? _EmptyState(
-                              onAddUser: () => _showUserForm(context),
-                            )
-                          : ListView.builder(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: isCompact ? 10 : 12,
+                          ? RefreshIndicator(
+                              onRefresh: () =>
+                                  ref.read(usersProvider.notifier).loadUsers(),
+                              child: ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                children: [
+                                  SizedBox(
+                                    height: MediaQuery.of(context).size.height *
+                                        0.4,
+                                    child: _EmptyState(
+                                      onAddUser: () => _showUserForm(context),
+                                      onRefresh: () => ref
+                                          .read(usersProvider.notifier)
+                                          .loadUsers(),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              itemCount: users.length,
-                              itemBuilder: (context, index) {
-                                final user = users[index];
-                                return _UserCard(
-                                  user: user,
-                                  onEdit: () =>
-                                      _showUserForm(context, user: user),
-                                  onDelete: () => _confirmDelete(context, user),
-                                  onToggleStatus: () => _toggleUserStatus(user),
-                                );
-                              },
+                            )
+                          : RefreshIndicator(
+                              onRefresh: () =>
+                                  ref.read(usersProvider.notifier).loadUsers(),
+                              child: ListView.builder(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isCompact ? 10 : 12,
+                                ),
+                                itemCount: users.length,
+                                itemBuilder: (context, index) {
+                                  final user = users[index];
+                                  return _UserCard(
+                                    user: user,
+                                    onEdit: () =>
+                                        _showUserForm(context, user: user),
+                                    onDelete: () =>
+                                        _confirmDelete(context, user),
+                                    onToggleStatus: () =>
+                                        _toggleUserStatus(user),
+                                  );
+                                },
+                              ),
                             ),
                     ),
                   ],
@@ -640,8 +663,9 @@ class _SummaryItem extends StatelessWidget {
 // Empty State
 class _EmptyState extends StatelessWidget {
   final VoidCallback onAddUser;
+  final VoidCallback? onRefresh;
 
-  const _EmptyState({required this.onAddUser});
+  const _EmptyState({required this.onAddUser, this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
@@ -671,18 +695,32 @@ class _EmptyState extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: onAddUser,
-              icon: Icon(Icons.person_add, size: isCompact ? 16 : 18),
-              label: Text('Tambah User',
-                  style: TextStyle(fontSize: isCompact ? 12 : 13)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                padding: EdgeInsets.symmetric(
-                  horizontal: isCompact ? 16 : 20,
-                  vertical: isCompact ? 8 : 10,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (onRefresh != null) ...[
+                  TextButton.icon(
+                    onPressed: onRefresh,
+                    icon: Icon(Icons.refresh, size: isCompact ? 16 : 18),
+                    label: Text('Refresh',
+                        style: TextStyle(fontSize: isCompact ? 12 : 13)),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                ElevatedButton.icon(
+                  onPressed: onAddUser,
+                  icon: Icon(Icons.person_add, size: isCompact ? 16 : 18),
+                  label: Text('Tambah User',
+                      style: TextStyle(fontSize: isCompact ? 12 : 13)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isCompact ? 16 : 20,
+                      vertical: isCompact ? 8 : 10,
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -1131,7 +1169,7 @@ class _UserFormSheetState extends ConsumerState<_UserFormSheet> {
                           );
                         }
                         return DropdownButtonFormField<String>(
-                          initialValue: _selectedBranchId,
+                          value: _selectedBranchId,
                           decoration: InputDecoration(
                             labelText: 'Pilih Cabang',
                             labelStyle:
@@ -1150,11 +1188,9 @@ class _UserFormSheetState extends ConsumerState<_UserFormSheet> {
                               fontSize: isCompact ? 12 : 13,
                               color: AppTheme.textPrimary),
                           items: [
-                            DropdownMenuItem<String>(
+                            const DropdownMenuItem<String>(
                               value: null,
-                              child: Text('Tidak ada cabang (Semua cabang)',
-                                  style:
-                                      TextStyle(fontSize: isCompact ? 12 : 13)),
+                              child: Text('Tidak ada cabang (Semua cabang)'),
                             ),
                             ...branches.map((branch) {
                               return DropdownMenuItem<String>(

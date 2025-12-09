@@ -455,6 +455,7 @@ class RecipeRepository {
   }
 
   /// Calculate max servings from materials (multi-tenant)
+  /// Returns -1 if no recipe exists, 0 if materials are insufficient
   int calculateMaxServings(
     String tenantId,
     String productId,
@@ -477,7 +478,21 @@ class RecipeRepository {
             createdAt: DateTime.now()),
       );
 
+      // Material not found or no stock
       if (material.id.isEmpty || material.stock <= 0) return 0;
+
+      // Check unit compatibility
+      if (!_areUnitsCompatible(material.unit, ingredient.unit)) {
+        // Units are incompatible, use direct comparison as fallback
+        debugPrint('Warning: Incompatible units for ${ingredient.name}: '
+            'material=${material.unit}, recipe=${ingredient.unit}');
+        if (ingredient.quantity > 0) {
+          final possibleServings =
+              (material.stock / ingredient.quantity).floor();
+          if (possibleServings < maxServings) maxServings = possibleServings;
+        }
+        continue;
+      }
 
       final availableStock = _convertToBaseUnit(material.stock, material.unit);
       final neededPerServing =
@@ -534,20 +549,74 @@ class RecipeRepository {
     }).toList();
   }
 
+  /// Convert value to base unit for consistent calculation
+  /// Weight: converts to grams
+  /// Volume: converts to milliliters
+  /// Other units: returns as-is
   double _convertToBaseUnit(double value, String unit) {
-    switch (unit.toLowerCase()) {
+    if (value <= 0) return 0;
+
+    final normalizedUnit = unit.toLowerCase().trim();
+    switch (normalizedUnit) {
+      // Weight units - convert to grams
       case 'kg':
+      case 'kilogram':
         return value * 1000;
       case 'gram':
       case 'g':
+      case 'gr':
         return value;
+      case 'mg':
+      case 'miligram':
+        return value / 1000;
+      // Volume units - convert to milliliters
       case 'liter':
       case 'l':
+      case 'lt':
         return value * 1000;
       case 'ml':
+      case 'mililiter':
+        return value;
+      // Count units - return as-is
+      case 'pcs':
+      case 'buah':
+      case 'biji':
+      case 'lembar':
+      case 'sachet':
+      case 'botol':
+      case 'pack':
+      case 'dus':
+      case 'karton':
         return value;
       default:
         return value;
     }
+  }
+
+  /// Check if two units are compatible for comparison
+  bool _areUnitsCompatible(String unit1, String unit2) {
+    final weightUnits = {'kg', 'kilogram', 'gram', 'g', 'gr', 'mg', 'miligram'};
+    final volumeUnits = {'liter', 'l', 'lt', 'ml', 'mililiter'};
+    final countUnits = {
+      'pcs',
+      'buah',
+      'biji',
+      'lembar',
+      'sachet',
+      'botol',
+      'pack',
+      'dus',
+      'karton'
+    };
+
+    final u1 = unit1.toLowerCase().trim();
+    final u2 = unit2.toLowerCase().trim();
+
+    if (weightUnits.contains(u1) && weightUnits.contains(u2)) return true;
+    if (volumeUnits.contains(u1) && volumeUnits.contains(u2)) return true;
+    if (countUnits.contains(u1) && countUnits.contains(u2)) return true;
+
+    // Same unit
+    return u1 == u2;
   }
 }

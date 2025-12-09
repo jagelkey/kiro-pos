@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../data/services/supabase_service.dart';
 import '../../data/database/database_helper.dart';
@@ -183,8 +184,28 @@ class SyncManager {
       case 'branches':
         await _supabase.updateBranch(operation.id, operation.data);
         break;
+      case 'tenants':
+        await _supabase.updateTenant(operation.id, operation.data);
+        break;
       case 'recipes':
-        await _supabase.updateRecipe(operation.id, operation.data);
+        // Recipes use product_id for identification, not a separate id
+        // Delete existing and recreate with new ingredients
+        final productId = operation.data['product_id'] as String?;
+        if (productId != null) {
+          await _supabase.deleteRecipesByProduct(productId);
+          // Recreate recipes from ingredients
+          final ingredients = operation.data['ingredients'] as List?;
+          if (ingredients != null && ingredients.isNotEmpty) {
+            for (final ing in ingredients) {
+              await _supabase.createRecipe({
+                'tenant_id': operation.data['tenant_id'],
+                'product_id': productId,
+                'material_id': ing['material_id'],
+                'quantity': ing['quantity'],
+              });
+            }
+          }
+        }
         break;
     }
   }
@@ -213,7 +234,11 @@ class SyncManager {
         await _supabase.deleteBranch(operation.id);
         break;
       case 'recipes':
-        await _supabase.deleteRecipe(operation.id);
+        // Recipes use product_id for identification
+        final productId = operation.data['product_id'] as String?;
+        if (productId != null) {
+          await _supabase.deleteRecipesByProduct(productId);
+        }
         break;
     }
   }
@@ -226,10 +251,16 @@ class SyncManager {
 
       _syncQueue.clear();
       for (final row in results) {
-        _syncQueue.add(SyncOperation.fromMap(row));
+        try {
+          _syncQueue.add(SyncOperation.fromMap(row));
+        } catch (e) {
+          print('Error parsing sync operation: $e');
+          // Skip invalid operations
+        }
       }
     } catch (e) {
-      // Table might not exist yet, ignore
+      // Table might not exist yet, or database not available (web)
+      print('Could not load pending operations: $e');
     }
   }
 
@@ -285,7 +316,7 @@ class SyncOperation {
       'id': id,
       'table_name': table,
       'operation_type': type.toString().split('.').last,
-      'data': data.toString(), // Store as JSON string
+      'data': jsonEncode(data), // Store as proper JSON string
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -296,12 +327,14 @@ class SyncOperation {
     final dataField = map['data'];
     if (dataField is String) {
       try {
-        dataMap = Map<String, dynamic>.from(
-          (dataField.isNotEmpty)
-              ? (Map<String, dynamic>.from({})) // Parse JSON if needed
-              : {},
-        );
+        if (dataField.isNotEmpty && dataField.startsWith('{')) {
+          // Try to parse as JSON
+          dataMap = Map<String, dynamic>.from(jsonDecode(dataField));
+        } else {
+          dataMap = {};
+        }
       } catch (e) {
+        print('Error parsing sync data JSON: $e');
         dataMap = {};
       }
     } else if (dataField is Map) {
@@ -312,7 +345,7 @@ class SyncOperation {
 
     return SyncOperation(
       id: map['id'] as String,
-      table: map['table_name'] as String? ?? map['table'] as String,
+      table: map['table_name'] as String? ?? map['table'] as String? ?? '',
       type: SyncOperationType.values.firstWhere(
         (e) =>
             e.toString().split('.').last ==
@@ -320,7 +353,9 @@ class SyncOperation {
         orElse: () => SyncOperationType.insert,
       ),
       data: dataMap,
-      createdAt: DateTime.parse(map['created_at'] as String),
+      createdAt: map['created_at'] != null
+          ? DateTime.parse(map['created_at'] as String)
+          : DateTime.now(),
     );
   }
 }

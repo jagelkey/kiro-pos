@@ -1073,7 +1073,7 @@ class _RecipeEditDialogState extends ConsumerState<RecipeEditDialog> {
                   const Text('Waktu Persiapan', style: TextStyle(fontSize: 12)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<int>(
-                    initialValue: _preparationTime,
+                    value: _preparationTime,
                     decoration: const InputDecoration(
                         isDense: true,
                         contentPadding:
@@ -1096,7 +1096,7 @@ class _RecipeEditDialogState extends ConsumerState<RecipeEditDialog> {
                       style: TextStyle(fontSize: 12)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<String>(
-                    initialValue: _difficulty,
+                    value: _difficulty,
                     decoration: const InputDecoration(
                         isDense: true,
                         contentPadding:

@@ -395,6 +395,30 @@ class _RecipeDialogState extends ConsumerState<RecipeDialog> {
   }
 
   Future<void> _saveRecipe() async {
+    // Validate ingredients before saving
+    if (_ingredients.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tambahkan minimal satu bahan untuk resep'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Validate all ingredients have valid quantities
+    for (final ingredient in _ingredients) {
+      if (ingredient.quantity <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Jumlah ${ingredient.name} harus lebih dari 0'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() => _isLoading = true);
     try {
       await ref.read(recipeNotifierProvider.notifier).saveRecipe(
@@ -412,10 +436,20 @@ class _RecipeDialogState extends ConsumerState<RecipeDialog> {
       }
     } catch (e) {
       if (mounted) {
+        // Parse error for user-friendly message
+        String errorMsg = e.toString().replaceAll('Exception: ', '');
+        bool isNetworkError = errorMsg.contains('network') ||
+            errorMsg.contains('Connection') ||
+            errorMsg.contains('timeout');
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Gagal menyimpan: $e'),
-              backgroundColor: Colors.red),
+            content: Text(isNetworkError
+                ? 'Gagal menyimpan: Tidak ada koneksi internet. Resep akan disimpan secara lokal.'
+                : 'Gagal menyimpan: $errorMsg'),
+            backgroundColor: isNetworkError ? Colors.orange : Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     } finally {

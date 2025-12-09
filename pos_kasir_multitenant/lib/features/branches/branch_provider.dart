@@ -1,12 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../core/config/app_config.dart';
+import '../../core/services/sync_manager.dart';
 import '../../data/models/branch.dart';
 import '../../data/models/user.dart';
 import '../../data/repositories/branch_repository.dart';
 import '../../data/repositories/cloud_repository.dart';
 import '../../data/repositories/product_repository.dart'; // For RepositoryResult
 import '../auth/auth_provider.dart';
+
+/// Helper function to check connectivity results
+bool _checkConnectivityResults(dynamic results) {
+  if (results is List<ConnectivityResult>) {
+    return results.isNotEmpty &&
+        !results.every((r) => r == ConnectivityResult.none);
+  } else if (results is ConnectivityResult) {
+    return results != ConnectivityResult.none;
+  }
+  return true;
+}
 
 final cloudBranchRepositoryProvider = Provider((ref) => CloudRepository());
 
@@ -22,6 +35,37 @@ class BranchListNotifier extends StateNotifier<AsyncValue<List<Branch>>> {
 
   BranchListNotifier(this.ref) : super(const AsyncValue.loading()) {
     loadBranches();
+  }
+
+  /// Check network connectivity
+  Future<bool> _checkConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return _checkConnectivityResults(results);
+    } catch (e) {
+      return true; // Assume online if check fails
+    }
+  }
+
+  /// Queue branch operation for sync when back online (Android only)
+  Future<void> _queueForSync(String operation, Branch branch) async {
+    if (kIsWeb) return; // Web doesn't support offline sync
+
+    try {
+      final syncOp = SyncOperation(
+        id: '${branch.id}-$operation-${DateTime.now().millisecondsSinceEpoch}',
+        table: 'branches',
+        type: operation == 'insert'
+            ? SyncOperationType.insert
+            : operation == 'update'
+                ? SyncOperationType.update
+                : SyncOperationType.delete,
+        data: branch.toMap(),
+      );
+      await SyncManager.instance.queueOperation(syncOp);
+    } catch (e) {
+      debugPrint('Failed to queue branch sync operation: $e');
+    }
   }
 
   Future<void> loadBranches() async {
@@ -42,8 +86,10 @@ class BranchListNotifier extends StateNotifier<AsyncValue<List<Branch>>> {
         return;
       }
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudBranchRepositoryProvider);
           final branches = await cloudRepo.getBranchesByOwner(user.id);
@@ -51,9 +97,11 @@ class BranchListNotifier extends StateNotifier<AsyncValue<List<Branch>>> {
           return;
         } catch (e) {
           debugPrint('Cloud branches load failed, falling back to local: $e');
+          // Continue to local fallback
         }
       }
 
+      // Fallback to local (offline mode or cloud failed)
       final branches = await _repository.getBranchesByOwner(user.id);
       state = AsyncValue.data(branches);
     } catch (e, st) {
@@ -61,218 +109,228 @@ class BranchListNotifier extends StateNotifier<AsyncValue<List<Branch>>> {
     }
   }
 
-  /// Retry loading after error
-  void retry() => loadBranches();
-
-  BranchRepository get repository => _repository;
-}
-
-/// Provider for managing branch operations
-class BranchProvider extends ChangeNotifier {
-  final BranchRepository _repository = BranchRepository();
-  final CloudRepository _cloudRepository = CloudRepository();
-
-  List<Branch> _branches = [];
-  Branch? _selectedBranch;
-  bool _isLoading = false;
-  String? _error;
-
-  // Getters
-  List<Branch> get branches => _branches;
-  Branch? get selectedBranch => _selectedBranch;
-  bool get isLoading => _isLoading;
-  String? get error => _error;
-
-  /// Load all branches for an owner
-  Future<void> loadBranches(String ownerId) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
-    try {
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
-        try {
-          _branches = await _cloudRepository.getBranchesByOwner(ownerId);
-          _isLoading = false;
-          notifyListeners();
-          return;
-        } catch (e) {
-          debugPrint('Cloud branches load failed, falling back to local: $e');
-        }
-      }
-
-      _branches = await _repository.getBranchesByOwner(ownerId);
-    } catch (e) {
-      _error = 'Failed to load branches: $e';
-      debugPrint(_error);
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Select a branch
-  void selectBranch(Branch? branch) {
-    _selectedBranch = branch;
-    notifyListeners();
-  }
-
-  /// Create a new branch
+  /// Create a new branch with offline support
   Future<RepositoryResult<Branch>> createBranch(Branch branch) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
     try {
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
-          final created = await _cloudRepository.createBranch(branch);
-          _branches.add(created);
-          _branches.sort((a, b) => a.name.compareTo(b.name));
+          final cloudRepo = ref.read(cloudBranchRepositoryProvider);
+          final created = await cloudRepo.createBranch(branch);
+          await loadBranches(); // Refresh list
           return RepositoryResult.success(created);
         } catch (e) {
-          debugPrint('Cloud branch create failed, falling back to local: $e');
+          // Offline fallback: save locally and queue for sync
+          if (!kIsWeb) {
+            debugPrint('Cloud branch create failed, saving locally: $e');
+            final result = await _repository.createBranch(branch);
+            if (result.success) {
+              await _queueForSync('insert', result.data!);
+              await loadBranches();
+            }
+            return result;
+          } else {
+            return RepositoryResult.failure('Gagal membuat cabang: $e');
+          }
         }
       }
 
+      // Local mode
       final result = await _repository.createBranch(branch);
       if (result.success) {
-        _branches.add(result.data!);
-        _branches.sort((a, b) => a.name.compareTo(b.name));
+        // Queue for sync when online (Android only)
+        if (!kIsWeb && AppConfig.useSupabase) {
+          await _queueForSync('insert', result.data!);
+        }
+        await loadBranches();
       }
       return result;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+    } catch (e) {
+      return RepositoryResult.failure('Gagal membuat cabang: $e');
     }
   }
 
-  /// Update an existing branch
+  /// Update an existing branch with offline support
   Future<RepositoryResult<Branch>> updateBranch(Branch branch) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
     try {
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      final isOnline = await _checkConnectivity();
+      final branchToUpdate = branch.copyWith(updatedAt: DateTime.now());
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
-          await _cloudRepository.updateBranch(branch);
-          final index = _branches.indexWhere((b) => b.id == branch.id);
-          if (index != -1) {
-            _branches[index] = branch;
-          }
-          return RepositoryResult.success(branch);
+          final cloudRepo = ref.read(cloudBranchRepositoryProvider);
+          await cloudRepo.updateBranch(branchToUpdate);
+          await loadBranches(); // Refresh list
+          return RepositoryResult.success(branchToUpdate);
         } catch (e) {
-          debugPrint('Cloud branch update failed, falling back to local: $e');
+          // Offline fallback: save locally and queue for sync
+          if (!kIsWeb) {
+            debugPrint('Cloud branch update failed, saving locally: $e');
+            final result = await _repository.updateBranch(branchToUpdate);
+            if (result.success) {
+              await _queueForSync('update', result.data!);
+              await loadBranches();
+            }
+            return result;
+          } else {
+            return RepositoryResult.failure('Gagal memperbarui cabang: $e');
+          }
         }
       }
 
-      final result = await _repository.updateBranch(branch);
+      // Local mode
+      final result = await _repository.updateBranch(branchToUpdate);
       if (result.success) {
-        final index = _branches.indexWhere((b) => b.id == branch.id);
-        if (index != -1) {
-          _branches[index] = result.data!;
+        // Queue for sync when online (Android only)
+        if (!kIsWeb && AppConfig.useSupabase) {
+          await _queueForSync('update', result.data!);
         }
+        await loadBranches();
       }
       return result;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+    } catch (e) {
+      return RepositoryResult.failure('Gagal memperbarui cabang: $e');
     }
   }
 
-  /// Toggle branch active status
+  /// Delete a branch with offline support
+  Future<RepositoryResult<bool>> deleteBranch(String id,
+      {String? ownerId}) async {
+    try {
+      final isOnline = await _checkConnectivity();
+
+      // Find branch for sync queue (before deletion)
+      final Branch branchToDelete;
+      final currentState = state;
+      if (currentState is AsyncData<List<Branch>>) {
+        branchToDelete = currentState.value.firstWhere(
+          (b) => b.id == id,
+          orElse: () => Branch(
+            id: id,
+            ownerId: ownerId ?? '',
+            name: '',
+            code: '',
+            createdAt: DateTime.now(),
+          ),
+        );
+      } else {
+        branchToDelete = Branch(
+          id: id,
+          ownerId: ownerId ?? '',
+          name: '',
+          code: '',
+          createdAt: DateTime.now(),
+        );
+      }
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
+        try {
+          final cloudRepo = ref.read(cloudBranchRepositoryProvider);
+          await cloudRepo.deleteBranch(id);
+          await loadBranches(); // Refresh list
+          return RepositoryResult.success(true);
+        } catch (e) {
+          // Offline fallback: delete locally and queue for sync
+          if (!kIsWeb) {
+            debugPrint('Cloud branch delete failed, deleting locally: $e');
+            final result = await _repository.deleteBranch(id, ownerId: ownerId);
+            if (result.success) {
+              await _queueForSync('delete', branchToDelete);
+              await loadBranches();
+            }
+            return result;
+          } else {
+            return RepositoryResult.failure('Gagal menghapus cabang: $e');
+          }
+        }
+      }
+
+      // Local mode
+      final result = await _repository.deleteBranch(id, ownerId: ownerId);
+      if (result.success) {
+        // Queue for sync when online (Android only)
+        if (!kIsWeb && AppConfig.useSupabase) {
+          await _queueForSync('delete', branchToDelete);
+        }
+        await loadBranches();
+      }
+      return result;
+    } catch (e) {
+      return RepositoryResult.failure('Gagal menghapus cabang: $e');
+    }
+  }
+
+  /// Toggle branch active status with offline support
   Future<RepositoryResult<Branch>> toggleStatus(
       String id, bool isActive) async {
     try {
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
-        try {
-          final branch = await _cloudRepository.getBranchById(id);
-          if (branch != null) {
-            final updated = Branch(
-              id: branch.id,
-              ownerId: branch.ownerId,
-              name: branch.name,
-              code: branch.code,
-              address: branch.address,
-              phone: branch.phone,
-              taxRate: branch.taxRate,
-              isActive: isActive,
-              createdAt: branch.createdAt,
-              updatedAt: DateTime.now(),
-            );
-            await _cloudRepository.updateBranch(updated);
-            final index = _branches.indexWhere((b) => b.id == id);
-            if (index != -1) {
-              _branches[index] = updated;
-            }
-            return RepositoryResult.success(updated);
-          }
-        } catch (e) {
-          debugPrint('Cloud branch toggle failed, falling back to local: $e');
+      final isOnline = await _checkConnectivity();
+
+      // Find the branch to update
+      Branch? branchToUpdate;
+      final currentState = state;
+      if (currentState is AsyncData<List<Branch>>) {
+        final index = currentState.value.indexWhere((b) => b.id == id);
+        if (index != -1) {
+          branchToUpdate = currentState.value[index].copyWith(
+            isActive: isActive,
+            updatedAt: DateTime.now(),
+          );
         }
       }
 
+      if (branchToUpdate == null) {
+        return RepositoryResult.failure('Cabang tidak ditemukan');
+      }
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
+        try {
+          final cloudRepo = ref.read(cloudBranchRepositoryProvider);
+          await cloudRepo.updateBranch(branchToUpdate);
+          await loadBranches(); // Refresh list
+          return RepositoryResult.success(branchToUpdate);
+        } catch (e) {
+          // Offline fallback: update locally and queue for sync
+          if (!kIsWeb) {
+            debugPrint('Cloud branch toggle failed, updating locally: $e');
+            final result = isActive
+                ? await _repository.activateBranch(id)
+                : await _repository.deactivateBranch(id);
+            if (result.success) {
+              await _queueForSync('update', result.data!);
+              await loadBranches();
+            }
+            return result;
+          } else {
+            return RepositoryResult.failure('Gagal mengubah status: $e');
+          }
+        }
+      }
+
+      // Local mode
       final result = isActive
           ? await _repository.activateBranch(id)
           : await _repository.deactivateBranch(id);
       if (result.success) {
-        final index = _branches.indexWhere((b) => b.id == id);
-        if (index != -1) {
-          _branches[index] = result.data!;
+        // Queue for sync when online (Android only)
+        if (!kIsWeb && AppConfig.useSupabase) {
+          await _queueForSync('update', result.data!);
         }
+        await loadBranches();
       }
       return result;
-    } finally {
-      notifyListeners();
+    } catch (e) {
+      return RepositoryResult.failure('Gagal mengubah status: $e');
     }
   }
 
-  /// Delete a branch
-  Future<RepositoryResult<bool>> deleteBranch(String id) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
+  /// Retry loading after error
+  void retry() => loadBranches();
 
-    try {
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
-        try {
-          await _cloudRepository.deleteBranch(id);
-          _branches.removeWhere((b) => b.id == id);
-          if (_selectedBranch?.id == id) {
-            _selectedBranch = null;
-          }
-          return RepositoryResult.success(true);
-        } catch (e) {
-          debugPrint('Cloud branch delete failed, falling back to local: $e');
-        }
-      }
-
-      final result = await _repository.deleteBranch(id);
-      if (result.success) {
-        _branches.removeWhere((b) => b.id == id);
-        if (_selectedBranch?.id == id) {
-          _selectedBranch = null;
-        }
-      }
-      return result;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Clear all state
-  void clear() {
-    _branches = [];
-    _selectedBranch = null;
-    _isLoading = false;
-    _error = null;
-    notifyListeners();
-  }
+  BranchRepository get repository => _repository;
 }

@@ -1,4 +1,4 @@
-# Flutter specific rules
+# Flutter Wrapper
 -keep class io.flutter.app.** { *; }
 -keep class io.flutter.plugin.**  { *; }
 -keep class io.flutter.util.**  { *; }
@@ -6,52 +6,45 @@
 -keep class io.flutter.**  { *; }
 -keep class io.flutter.plugins.**  { *; }
 -keep class io.flutter.embedding.** { *; }
+-dontwarn io.flutter.embedding.**
 
-# Riverpod - State Management
--keep class * extends **StateNotifier { *; }
--keep class * extends **ChangeNotifier { *; }
--keepclassmembers class * extends **StateNotifier {
-    public <methods>;
+# Preserve annotations and signatures
+-keepattributes *Annotation*
+-keepattributes Signature
+-keepattributes InnerClasses
+-keepattributes EnclosingMethod
+
+# Keep native methods
+-keepclasseswithmembernames class * {
+    native <methods>;
 }
--keepclassmembers class * extends **ChangeNotifier {
-    public <methods>;
-}
 
-# Keep all provider classes
--keep class **Provider { *; }
--keep class **Notifier { *; }
-
-# Google Play Core (for deferred components)
--dontwarn com.google.android.play.core.**
--keep class com.google.android.play.core.** { *; }
--keep class com.google.android.play.core.splitinstall.** { *; }
--keep class com.google.android.play.core.tasks.** { *; }
-
-# Supabase
--keep class io.supabase.** { *; }
--dontwarn io.supabase.**
+# Gson
+-keepattributes Signature
+-keepattributes *Annotation*
+-dontwarn sun.misc.**
+-keep class com.google.gson.** { *; }
+-keep class * implements com.google.gson.TypeAdapter
+-keep class * implements com.google.gson.TypeAdapterFactory
+-keep class * implements com.google.gson.JsonSerializer
+-keep class * implements com.google.gson.JsonDeserializer
 
 # SQLite
 -keep class org.sqlite.** { *; }
 -keep class org.sqlite.database.** { *; }
 
-# Keep model classes
--keep class com.posapp.pos_kasir_multitenant.** { *; }
+# Supabase & Networking
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn javax.annotation.**
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
 
-# Gson (if used)
--keepattributes Signature
--keepattributes *Annotation*
--dontwarn sun.misc.**
--keep class com.google.gson.** { *; }
-
-# General Android rules
+# General rules
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# Keep all methods that might be called via reflection
--keepclassmembers class * {
-    public <methods>;
-}
-
-# Ignore missing classes warnings
--ignorewarnings
+# Don't warn about missing classes
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**

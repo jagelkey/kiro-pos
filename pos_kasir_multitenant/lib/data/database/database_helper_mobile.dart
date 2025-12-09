@@ -103,10 +103,12 @@ class DatabaseHelper {
     // Transactions table
     // Requirements 13.5: Associate transactions with shift
     // Requirements 14.6: Associate transactions with discount
+    // Multi-branch support: branch_id for branch-specific transactions
     await db.execute('''
       CREATE TABLE transactions (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
+        branch_id TEXT,
         user_id TEXT NOT NULL,
         shift_id TEXT,
         discount_id TEXT,
@@ -118,6 +120,7 @@ class DatabaseHelper {
         payment_method TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (tenant_id) REFERENCES tenants (id),
+        FOREIGN KEY (branch_id) REFERENCES branches (id),
         FOREIGN KEY (user_id) REFERENCES users (id),
         FOREIGN KEY (shift_id) REFERENCES shifts (id),
         FOREIGN KEY (discount_id) REFERENCES discounts (id)
@@ -250,6 +253,9 @@ class DatabaseHelper {
     );
     await db.execute(
       'CREATE INDEX idx_transactions_tenant ON transactions(tenant_id)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_transactions_branch ON transactions(branch_id)',
     );
     await db.execute('CREATE INDEX idx_expenses_tenant ON expenses(tenant_id)');
     await db.execute(

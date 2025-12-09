@@ -343,10 +343,36 @@ class MaterialsScreen extends ConsumerWidget {
   }
 
   Widget _buildErrorWidget(BuildContext context, WidgetRef ref, Object error) {
-    // Extract clean error message
+    // Parse error message for user-friendly display
     String errorMessage = error.toString();
     if (errorMessage.startsWith('Exception: ')) {
       errorMessage = errorMessage.substring(11);
+    }
+
+    bool isNetworkError = errorMessage.contains('SocketException') ||
+        errorMessage.contains('TimeoutException') ||
+        errorMessage.contains('Connection') ||
+        errorMessage.contains('network');
+    bool isTenantError =
+        errorMessage.contains('Tenant') || errorMessage.contains('tenant');
+
+    String displayMessage;
+    IconData errorIcon;
+    Color errorColor;
+
+    if (isNetworkError) {
+      displayMessage =
+          'Tidak dapat terhubung ke server.\nData akan dimuat dari penyimpanan lokal.';
+      errorIcon = Icons.cloud_off;
+      errorColor = Colors.orange;
+    } else if (isTenantError) {
+      displayMessage = 'Sesi telah berakhir.\nSilakan login ulang.';
+      errorIcon = Icons.lock_outline;
+      errorColor = Colors.red;
+    } else {
+      displayMessage = 'Gagal memuat data:\n$errorMessage';
+      errorIcon = Icons.error_outline;
+      errorColor = Colors.red;
     }
 
     return Center(
@@ -355,17 +381,17 @@ class MaterialsScreen extends ConsumerWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            Icon(errorIcon, size: 64, color: errorColor),
             const SizedBox(height: 16),
             Text(
-              'Gagal memuat data',
+              isNetworkError ? 'Mode Offline' : 'Terjadi Kesalahan',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             Text(
-              errorMessage,
+              displayMessage,
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppTheme.textMuted),
+              style: TextStyle(color: errorColor),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
@@ -374,6 +400,16 @@ class MaterialsScreen extends ConsumerWidget {
               icon: const Icon(Icons.refresh),
               label: const Text('Coba Lagi'),
             ),
+            if (isTenantError) ...[
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context)
+                      .pushNamedAndRemoveUntil('/login', (route) => false);
+                },
+                child: const Text('Login Ulang'),
+              ),
+            ],
           ],
         ),
       ),
@@ -1381,7 +1417,54 @@ class _MaterialFormDialogState extends ConsumerState<MaterialFormDialog> {
 
     final authState = ref.read(authProvider);
     if (authState.tenant == null) {
-      _showError('Tenant tidak ditemukan');
+      _showError('Tenant tidak ditemukan. Silakan login ulang.');
+      return;
+    }
+
+    final tenantId = authState.tenant!.id;
+    if (tenantId.isEmpty) {
+      _showError('ID Tenant tidak valid');
+      return;
+    }
+
+    // Validate material name
+    final materialName = _nameController.text.trim();
+    if (materialName.isEmpty) {
+      _showError('Nama bahan baku wajib diisi');
+      return;
+    }
+    if (materialName.length > 100) {
+      _showError('Nama bahan baku maksimal 100 karakter');
+      return;
+    }
+
+    // Validate stock
+    final stock = double.tryParse(_stockController.text);
+    if (stock == null || stock < 0) {
+      _showError('Stok tidak valid');
+      return;
+    }
+    if (stock > 999999) {
+      _showError('Stok maksimal 999.999');
+      return;
+    }
+
+    // Validate min stock
+    final minStock = _minStockController.text.isEmpty
+        ? null
+        : double.tryParse(_minStockController.text);
+    if (minStock != null && minStock < 0) {
+      _showError('Stok minimum tidak boleh negatif');
+      return;
+    }
+    if (minStock != null && minStock > 999999) {
+      _showError('Stok minimum maksimal 999.999');
+      return;
+    }
+
+    // Validate unit
+    if (_selectedUnit.isEmpty) {
+      _showError('Satuan wajib dipilih');
       return;
     }
 
@@ -1390,13 +1473,11 @@ class _MaterialFormDialogState extends ConsumerState<MaterialFormDialog> {
     try {
       final material = mat.Material(
         id: widget.material?.id ?? const Uuid().v4(),
-        tenantId: authState.tenant!.id,
-        name: _nameController.text.trim(),
-        stock: double.tryParse(_stockController.text) ?? 0,
+        tenantId: tenantId,
+        name: materialName,
+        stock: stock,
         unit: _selectedUnit,
-        minStock: _minStockController.text.isEmpty
-            ? null
-            : double.tryParse(_minStockController.text),
+        minStock: minStock,
         category: _selectedCategory,
         createdAt: widget.material?.createdAt ?? DateTime.now(),
       );

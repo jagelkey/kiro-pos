@@ -9,6 +9,7 @@ import '../../data/models/product.dart';
 import '../../data/models/material.dart' as mat;
 import '../../data/mock/mock_data.dart';
 import '../../core/config/app_config.dart';
+import '../../core/services/sync_manager.dart';
 import '../expenses/expenses_provider.dart';
 import '../recipes/recipes_provider.dart';
 
@@ -376,6 +377,8 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
 
   /// Load dashboard data with fallback chain: Supabase → SQLite → Mock Data
   /// Requirements: 1.2, 1.4, 1.5, 3.2, 4.5
+  /// Multi-tenant: All data filtered by tenant ID
+  /// Offline support: Falls back to SQLite when cloud unavailable
   Future<void> loadDashboardData() async {
     state = state.copyWith(isLoading: true, error: null);
 
@@ -406,6 +409,9 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
       final materialRepo = ref.read(dashboardMaterialRepositoryProvider);
       final productRepo = ref.read(dashboardProductRepositoryProvider);
       final cloudRepo = ref.read(cloudRepoProvider);
+
+      // Get branch ID for branch-level filtering (multi-tenant support)
+      // If user has branchId, filter data by branch; otherwise show all tenant data
       final branchId = authState.user?.branchId;
 
       final now = DateTime.now();
@@ -423,11 +429,22 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
       List<dynamic> lowStockMaterials = [];
       List<Product> products = [];
 
+      // Check actual network connectivity first (for Android offline support)
+      bool networkAvailable = true;
+      if (!kIsWeb) {
+        try {
+          networkAvailable = SyncManager.instance.isOnline;
+        } catch (e) {
+          debugPrint('Network check failed: $e');
+          networkAvailable = false;
+        }
+      }
+
       // Fallback chain: Supabase → SQLite → Mock Data
       // Requirements: 3.2, 4.5
 
-      if (AppConfig.useSupabase) {
-        // Try Supabase first
+      if (AppConfig.useSupabase && networkAvailable) {
+        // Try Supabase first (only if network is available)
         try {
           final results = await Future.wait([
             _safeGetTransactionsFromCloud(
@@ -463,12 +480,9 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
           products = results[5] as List<Product>;
 
           // Check if we got valid data from Supabase
-          if (todayTransactions.isNotEmpty ||
-              materials.isNotEmpty ||
-              products.isNotEmpty) {
-            isOnline = true;
-            dataSource = DataSource.supabase;
-          }
+          // Even empty results are valid if no error occurred
+          isOnline = true;
+          dataSource = DataSource.supabase;
         } catch (e) {
           debugPrint('Supabase fetch failed, falling back to SQLite: $e');
         }
@@ -476,8 +490,10 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
 
       // Fallback to SQLite if Supabase failed or not enabled (and not web)
       // Requirements 2.1, 2.2: Multi-tenant data isolation with branch filtering
+      // This is the primary offline mode for Android
       if (dataSource == DataSource.none && !kIsWeb) {
         try {
+          debugPrint('Loading dashboard data from SQLite (offline mode)');
           final results = await Future.wait([
             _safeGetTransactionsFromSQLite(transactionRepo, tenantId,
                 branchId: branchId),
@@ -502,15 +518,18 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
           products = results[5] as List<Product>;
 
           dataSource = DataSource.sqlite;
-          isOnline = false;
+          isOnline = false; // Explicitly mark as offline when using SQLite
+          debugPrint(
+              'SQLite data loaded: ${todayTransactions.length} transactions, ${products.length} products');
         } catch (e) {
           debugPrint('SQLite fetch failed, falling back to mock data: $e');
         }
       }
 
       // Fallback to mock data for web or if all else fails
-      // Requirement 3.5
+      // Requirement 3.5: Graceful fallback ensures app always works
       if (dataSource == DataSource.none) {
+        debugPrint('Using mock data as fallback');
         final mockData = _getMockData(tenantId);
         todayTransactions = mockData['todayTransactions'] as List<Transaction>;
         todayExpenses = mockData['todayExpenses'] as double;
@@ -523,6 +542,8 @@ class DashboardNotifier extends StateNotifier<DashboardData> {
         dataSource = DataSource.mock;
         isOnline = false;
       }
+
+      debugPrint('Dashboard data source: $dataSource, isOnline: $isOnline');
 
       // Get recipes for multi-tenant support with safe access
       Map<String, List<RecipeIngredient>> recipes = {};

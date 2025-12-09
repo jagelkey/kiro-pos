@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../core/config/app_config.dart';
 import '../../data/models/transaction.dart';
 import '../../data/models/expense.dart';
@@ -131,6 +132,72 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
     await loadReportsData();
   }
 
+  /// Check network connectivity
+  Future<bool> _checkConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return _checkConnectivityResults(results);
+    } catch (e) {
+      debugPrint('Connectivity check failed: $e');
+      return true; // Assume online if check fails
+    }
+  }
+
+  /// Helper function to check connectivity results
+  bool _checkConnectivityResults(dynamic results) {
+    if (results is List<ConnectivityResult>) {
+      return results.isNotEmpty &&
+          !results.every((r) => r == ConnectivityResult.none);
+    } else if (results is ConnectivityResult) {
+      return results != ConnectivityResult.none;
+    }
+    return true; // Assume online if unknown type
+  }
+
+  /// Validates tenant and returns tenantId or throws exception
+  String _validateTenant() {
+    final authState = ref.read(authProvider);
+    if (authState.tenant == null) {
+      throw Exception('Tenant tidak ditemukan. Silakan login ulang.');
+    }
+    final tenantId = authState.tenant!.id;
+    if (tenantId.isEmpty) {
+      throw Exception('ID Tenant tidak valid');
+    }
+    return tenantId;
+  }
+
+  /// Format error message for user-friendly display
+  String _formatErrorMessage(dynamic error) {
+    final errorStr = error.toString().toLowerCase();
+
+    // Network errors
+    if (errorStr.contains('socketexception') ||
+        errorStr.contains('connection refused') ||
+        errorStr.contains('network') ||
+        errorStr.contains('timeout') ||
+        errorStr.contains('host lookup')) {
+      return 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
+    }
+
+    // Tenant errors
+    if (errorStr.contains('tenant')) {
+      return 'Tenant tidak ditemukan. Silakan login ulang.';
+    }
+
+    // Auth errors
+    if (errorStr.contains('unauthorized') || errorStr.contains('auth')) {
+      return 'Sesi telah berakhir. Silakan login ulang.';
+    }
+
+    // Database errors
+    if (errorStr.contains('database') || errorStr.contains('sqlite')) {
+      return 'Gagal mengakses data lokal. Coba restart aplikasi.';
+    }
+
+    return 'Gagal memuat data laporan. Silakan coba lagi.';
+  }
+
   /// Load available branches for filtering (multi-branch support)
   Future<void> loadBranches() async {
     try {
@@ -143,10 +210,11 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
         return;
       }
 
-      List<Branch> branches;
+      List<Branch> branches = [];
+      final isOnline = await _checkConnectivity();
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudReportsRepositoryProvider);
           branches = await cloudRepo.getBranchesByOwner(userId);
@@ -157,8 +225,16 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
         }
       }
 
-      final branchRepo = ref.read(reportsBranchRepositoryProvider);
-      branches = await branchRepo.getBranchesByOwner(userId);
+      // Fallback to local database
+      if (!kIsWeb) {
+        try {
+          final branchRepo = ref.read(reportsBranchRepositoryProvider);
+          branches = await branchRepo.getBranchesByOwner(userId);
+        } catch (e) {
+          debugPrint('Local branches load failed: $e');
+          branches = [];
+        }
+      }
 
       state = state.copyWith(branches: branches);
     } catch (e) {
@@ -172,16 +248,21 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
     state = state.copyWith(isLoading: true, clearError: true);
 
     try {
-      final authState = ref.read(authProvider);
-      if (authState.tenant == null) {
+      // Validate tenant first
+      final String tenantId;
+      try {
+        tenantId = _validateTenant();
+      } catch (e) {
         state = state.copyWith(
           transactions: [],
           expenses: [],
           isLoading: false,
-          error: 'Tenant tidak ditemukan. Silakan login ulang.',
+          error: e.toString().replaceAll('Exception: ', ''),
         );
         return;
       }
+
+      final authState = ref.read(authProvider);
 
       // Role validation - only owner and admin can access full reports
       // Cashier can only see their own transactions
@@ -196,29 +277,19 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
         return;
       }
 
-      final tenantId = authState.tenant!.id;
-
-      // Validate tenantId
-      if (tenantId.isEmpty) {
-        state = state.copyWith(
-          transactions: [],
-          expenses: [],
-          isLoading: false,
-          error: 'ID Tenant tidak valid',
-        );
-        return;
-      }
-
       final transactionRepo = ref.read(reportsTransactionRepositoryProvider);
       final expenseRepo = ref.read(expenseRepositoryProvider);
+
+      // Check connectivity for offline-first approach
+      final isOnline = await _checkConnectivity();
 
       // Use repository methods with proper date range filtering
       List<Transaction> transactions = [];
       List<Expense> filteredExpenses = [];
       bool loadedFromCloud = false;
 
-      // Try cloud first if enabled
-      if (AppConfig.useSupabase) {
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
         try {
           final cloudRepo = ref.read(cloudReportsRepositoryProvider);
           final results = await Future.wait([
@@ -237,42 +308,77 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
           transactions = results[0] as List<Transaction>;
           filteredExpenses = results[1] as List<Expense>;
           loadedFromCloud = true;
+
+          // Update offline status
+          state = state.copyWith(isOffline: false);
         } catch (e) {
           debugPrint('Cloud reports fetch failed, falling back to local: $e');
+          // Will fallback to local below
         }
       }
 
+      // Fallback to local database (offline mode or cloud failed)
       if (!loadedFromCloud) {
-        try {
-          final results = await Future.wait([
-            transactionRepo.getTransactionsByDateRange(
-              tenantId,
-              state.startDate,
-              state.endDate,
-            ),
-            expenseRepo.getExpensesByDateRange(
-              tenantId,
-              state.startDate,
-              state.endDate,
-            ),
-          ]);
+        if (!kIsWeb) {
+          try {
+            final results = await Future.wait([
+              transactionRepo.getTransactionsByDateRange(
+                tenantId,
+                state.startDate,
+                state.endDate,
+              ),
+              expenseRepo.getExpensesByDateRange(
+                tenantId,
+                state.startDate,
+                state.endDate,
+              ),
+            ]);
 
-          transactions = results[0] as List<Transaction>;
-          filteredExpenses = results[1] as List<Expense>;
-        } catch (e) {
-          debugPrint('Error fetching reports data: $e');
-          // Continue with empty data if fetch fails
-          transactions = [];
-          filteredExpenses = [];
+            transactions = results[0] as List<Transaction>;
+            filteredExpenses = results[1] as List<Expense>;
+
+            // Mark as offline mode
+            state = state.copyWith(isOffline: true);
+          } catch (e) {
+            debugPrint('Error fetching local reports data: $e');
+            state = state.copyWith(
+              transactions: [],
+              expenses: [],
+              isLoading: false,
+              isOffline: true,
+              error: _formatErrorMessage(e),
+            );
+            return;
+          }
+        } else {
+          // Web without cloud - show error
+          state = state.copyWith(
+            transactions: [],
+            expenses: [],
+            isLoading: false,
+            error: 'Tidak dapat memuat data. Periksa koneksi internet.',
+          );
+          return;
         }
       }
 
       // Filter by branch if selected (multi-branch support)
-      // Note: This requires branchId field in Transaction model
-      // For now, we filter based on available data
-      if (state.selectedBranchId != null) {
-        // Future enhancement: filter transactions by branchId
-        // transactions = transactions.where((t) => t.branchId == state.selectedBranchId).toList();
+      if (state.selectedBranchId != null &&
+          state.selectedBranchId!.isNotEmpty) {
+        // Filter transactions by branchId if available
+        transactions = transactions.where((t) {
+          // Check if transaction has branchId field
+          return t.branchId == null ||
+              t.branchId!.isEmpty ||
+              t.branchId == state.selectedBranchId;
+        }).toList();
+
+        // Filter expenses by branchId if available
+        filteredExpenses = filteredExpenses.where((e) {
+          return e.branchId == null ||
+              e.branchId!.isEmpty ||
+              e.branchId == state.selectedBranchId;
+        }).toList();
       }
 
       // Role-based filtering: Cashier only sees their own transactions
@@ -286,13 +392,13 @@ class ReportsNotifier extends StateNotifier<ReportsData> {
         transactions: transactions,
         expenses: filteredExpenses,
         isLoading: false,
-        isOffline: !kIsWeb,
+        clearError: true,
       );
     } catch (e) {
       debugPrint('Error in loadReportsData: $e');
       state = state.copyWith(
         isLoading: false,
-        error: 'Gagal memuat data laporan: ${e.toString()}',
+        error: _formatErrorMessage(e),
       );
     }
   }

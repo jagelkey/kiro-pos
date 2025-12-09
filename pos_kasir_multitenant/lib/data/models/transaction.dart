@@ -1,6 +1,7 @@
 class Transaction {
   final String id;
   final String tenantId;
+  final String? branchId; // Multi-branch support: Associate with branch
   final String userId;
   final String? shiftId; // Requirements 13.5: Associate with shift
   final String? discountId; // Requirements 14.6: Associate with discount
@@ -15,6 +16,7 @@ class Transaction {
   Transaction({
     required this.id,
     required this.tenantId,
+    this.branchId,
     required this.userId,
     this.shiftId,
     this.discountId,
@@ -38,6 +40,7 @@ class Transaction {
     return Transaction(
       id: json['id'],
       tenantId: json['tenant_id'],
+      branchId: json['branch_id'],
       userId: json['user_id'],
       shiftId: json['shift_id'],
       discountId: json['discount_id'],
@@ -57,6 +60,7 @@ class Transaction {
     return {
       'id': id,
       'tenant_id': tenantId,
+      'branch_id': branchId,
       'user_id': userId,
       'shift_id': shiftId,
       'discount_id': discountId,
@@ -74,6 +78,7 @@ class Transaction {
   Transaction copyWith({
     String? id,
     String? tenantId,
+    String? branchId,
     String? userId,
     String? shiftId,
     String? discountId,
@@ -88,6 +93,7 @@ class Transaction {
     return Transaction(
       id: id ?? this.id,
       tenantId: tenantId ?? this.tenantId,
+      branchId: branchId ?? this.branchId,
       userId: userId ?? this.userId,
       shiftId: shiftId ?? this.shiftId,
       discountId: discountId ?? this.discountId,

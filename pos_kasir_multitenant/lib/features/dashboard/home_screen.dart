@@ -42,19 +42,41 @@ class HomeScreen extends ConsumerWidget {
   }
 
   Widget _buildErrorWidget(BuildContext context, WidgetRef ref, String error) {
+    // Determine if this is a network error for better UX
+    final isNetworkError = error.toLowerCase().contains('network') ||
+        error.toLowerCase().contains('connection') ||
+        error.toLowerCase().contains('timeout');
+
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 64, color: Colors.red),
-          const SizedBox(height: 16),
-          Text('Error: $error'),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () => ref.read(dashboardProvider.notifier).refresh(),
-            child: const Text('Coba Lagi'),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isNetworkError ? Icons.wifi_off : Icons.error_outline,
+              size: 64,
+              color: isNetworkError ? Colors.orange : Colors.red,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isNetworkError ? 'Tidak ada koneksi' : 'Terjadi kesalahan',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              isNetworkError ? 'Periksa koneksi internet Anda' : error,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => ref.read(dashboardProvider.notifier).refresh(),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Coba Lagi'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -480,6 +502,7 @@ class _StatCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisSize: MainAxisSize.max,
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -498,15 +521,18 @@ class _StatCard extends StatelessWidget {
                 ],
               ),
               const Spacer(),
-              Text(
-                value,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: color,
-                      fontWeight: FontWeight.bold,
-                      fontSize: valueSize,
-                    ),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: color,
+                        fontWeight: FontWeight.bold,
+                        fontSize: valueSize,
+                      ),
+                  maxLines: 1,
+                ),
               ),
             ],
           ),

@@ -1,9 +1,24 @@
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import '../../core/config/app_config.dart';
+import '../../core/services/sync_manager.dart';
 import '../../data/models/tenant.dart';
 import '../../data/database/database_helper.dart';
+import '../../data/services/supabase_service.dart';
 import '../auth/auth_provider.dart';
+
+/// Helper function to check connectivity results
+bool _checkConnectivityResults(dynamic results) {
+  if (results is List<ConnectivityResult>) {
+    return results.isNotEmpty &&
+        !results.every((r) => r == ConnectivityResult.none);
+  } else if (results is ConnectivityResult) {
+    return results != ConnectivityResult.none;
+  }
+  return true;
+}
 
 /// App Settings Model - untuk pengaturan yang tidak terkait tenant
 class AppSettings {
@@ -160,6 +175,7 @@ final tenantSettingsProvider =
 
 class TenantSettingsNotifier extends StateNotifier<AsyncValue<Tenant?>> {
   final Ref ref;
+  final SupabaseService _supabase = SupabaseService.instance;
 
   TenantSettingsNotifier(this.ref) : super(const AsyncValue.loading()) {
     _loadTenant();
@@ -178,6 +194,33 @@ class TenantSettingsNotifier extends StateNotifier<AsyncValue<Tenant?>> {
   /// Get current tenant from auth state (always fresh)
   Tenant? get _currentTenant => ref.read(authProvider).tenant;
 
+  /// Check network connectivity
+  Future<bool> _checkConnectivity() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return _checkConnectivityResults(results);
+    } catch (e) {
+      return true; // Assume online if check fails
+    }
+  }
+
+  /// Queue tenant operation for sync when back online (Android only)
+  Future<void> _queueForSync(Tenant tenant) async {
+    if (kIsWeb) return; // Web doesn't support offline sync
+
+    try {
+      final syncOp = SyncOperation(
+        id: '${tenant.id}-update-${DateTime.now().millisecondsSinceEpoch}',
+        table: 'tenants',
+        type: SyncOperationType.update,
+        data: tenant.toMap(),
+      );
+      await SyncManager.instance.queueOperation(syncOp);
+    } catch (e) {
+      debugPrint('Failed to queue tenant sync operation: $e');
+    }
+  }
+
   /// Update tenant info
   /// Requirements: Hanya Owner yang bisa mengubah
   Future<void> updateTenant(Tenant tenant) async {
@@ -192,6 +235,49 @@ class TenantSettingsNotifier extends StateNotifier<AsyncValue<Tenant?>> {
     }
 
     try {
+      final isOnline = await _checkConnectivity();
+
+      // Try cloud first if enabled and online
+      if (AppConfig.useSupabase && isOnline) {
+        try {
+          await _supabase.updateTenant(tenant.id, tenant.toMap());
+          ref.read(authProvider.notifier).setTenant(tenant);
+          state = AsyncValue.data(tenant);
+          return;
+        } catch (e) {
+          // Offline fallback: save locally and queue for sync
+          if (!kIsWeb) {
+            debugPrint('Cloud tenant update failed, saving locally: $e');
+            final db = await DatabaseHelper.instance.database;
+
+            // Validate tenant exists
+            final existing = await db.query(
+              'tenants',
+              where: 'id = ?',
+              whereArgs: [tenant.id],
+            );
+            if (existing.isEmpty) {
+              throw Exception('Tenant tidak ditemukan');
+            }
+
+            await db.update(
+              'tenants',
+              tenant.toMap(),
+              where: 'id = ?',
+              whereArgs: [tenant.id],
+            );
+            ref.read(authProvider.notifier).setTenant(tenant);
+            state = AsyncValue.data(tenant);
+            // Queue for sync when online
+            await _queueForSync(tenant);
+            return;
+          } else {
+            throw Exception('Gagal menyimpan pengaturan: $e');
+          }
+        }
+      }
+
+      // Local mode (web in-memory or Android offline)
       if (kIsWeb) {
         // Update auth state dengan tenant baru (in-memory untuk web)
         ref.read(authProvider.notifier).setTenant(tenant);
@@ -217,6 +303,11 @@ class TenantSettingsNotifier extends StateNotifier<AsyncValue<Tenant?>> {
         );
         ref.read(authProvider.notifier).setTenant(tenant);
         state = AsyncValue.data(tenant);
+
+        // Queue for sync when online (Android only)
+        if (AppConfig.useSupabase) {
+          await _queueForSync(tenant);
+        }
       }
     } catch (e, stack) {
       debugPrint('Error updating tenant: $e');

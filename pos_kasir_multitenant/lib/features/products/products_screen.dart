@@ -397,20 +397,68 @@ class ProductsScreen extends ConsumerWidget {
   }
 
   Widget _buildErrorWidget(BuildContext context, WidgetRef ref, Object error) {
+    // Parse error message for user-friendly display
+    String errorMessage = error.toString();
+    bool isNetworkError = errorMessage.contains('SocketException') ||
+        errorMessage.contains('TimeoutException') ||
+        errorMessage.contains('Connection') ||
+        errorMessage.contains('network');
+    bool isTenantError =
+        errorMessage.contains('Tenant') || errorMessage.contains('tenant');
+
+    String displayMessage;
+    IconData errorIcon;
+    Color errorColor;
+
+    if (isNetworkError) {
+      displayMessage =
+          'Tidak dapat terhubung ke server.\nData akan dimuat dari penyimpanan lokal.';
+      errorIcon = Icons.cloud_off;
+      errorColor = Colors.orange;
+    } else if (isTenantError) {
+      displayMessage = 'Sesi telah berakhir.\nSilakan login ulang.';
+      errorIcon = Icons.lock_outline;
+      errorColor = Colors.red;
+    } else {
+      displayMessage =
+          'Terjadi kesalahan:\n${errorMessage.replaceAll('Exception: ', '')}';
+      errorIcon = Icons.error_outline;
+      errorColor = Colors.red;
+    }
+
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 64, color: Colors.red),
-          const SizedBox(height: 16),
-          Text('Error: $error'),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: () => ref.read(productProvider.notifier).loadProducts(),
-            icon: const Icon(Icons.refresh),
-            label: const Text('Coba Lagi'),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(errorIcon, size: 64, color: errorColor),
+            const SizedBox(height: 16),
+            Text(
+              displayMessage,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: errorColor),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () =>
+                  ref.read(productProvider.notifier).loadProducts(),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Coba Lagi'),
+            ),
+            if (isTenantError) ...[
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () {
+                  // Navigate to login
+                  Navigator.of(context)
+                      .pushNamedAndRemoveUntil('/login', (route) => false);
+                },
+                child: const Text('Login Ulang'),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1620,11 +1668,32 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       return;
     }
 
+    // Validate product name
+    final productName = _nameController.text.trim();
+    if (productName.isEmpty) {
+      _showError('Nama produk wajib diisi');
+      return;
+    }
+    if (productName.length > 100) {
+      _showError('Nama produk maksimal 100 karakter');
+      return;
+    }
+
+    // Validate category
+    if (_selectedCategory == null || _selectedCategory!.isEmpty) {
+      _showError('Kategori wajib dipilih');
+      return;
+    }
+
     // Validate price
     final price = double.tryParse(
         _priceController.text.replaceAll('.', '').replaceAll(',', ''));
     if (price == null || price < 0) {
       _showError('Harga jual tidak valid');
+      return;
+    }
+    if (price > 999999999) {
+      _showError('Harga jual maksimal Rp 999.999.999');
       return;
     }
 
@@ -1637,11 +1706,32 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       _showError('Harga pokok tidak valid');
       return;
     }
+    if (costPrice > 999999999) {
+      _showError('Harga pokok maksimal Rp 999.999.999');
+      return;
+    }
 
     // Validate stock
     final stock = int.tryParse(_stockController.text);
     if (stock == null || stock < 0) {
       _showError('Stok tidak valid');
+      return;
+    }
+    if (stock > 999999) {
+      _showError('Stok maksimal 999.999');
+      return;
+    }
+
+    // Validate barcode (optional but if provided, should be valid)
+    final barcode = _barcodeController.text.trim();
+    if (barcode.isNotEmpty && barcode.length > 50) {
+      _showError('Barcode maksimal 50 karakter');
+      return;
+    }
+
+    // Validate image size
+    if (_imageBase64 != null && _imageBase64!.length > 1024 * 1024 * 2) {
+      _showError('Ukuran gambar terlalu besar (maks 1.5MB encoded)');
       return;
     }
 
@@ -1651,10 +1741,8 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
       final product = Product(
         id: widget.product?.id ?? const Uuid().v4(),
         tenantId: tenantId,
-        name: _nameController.text.trim(),
-        barcode: _barcodeController.text.trim().isEmpty
-            ? null
-            : _barcodeController.text.trim(),
+        name: productName,
+        barcode: barcode.isEmpty ? null : barcode,
         price: price,
         costPrice: costPrice,
         stock: stock,
@@ -1673,7 +1761,11 @@ class _ProductFormDialogState extends ConsumerState<ProductFormDialog> {
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted) _showError('Gagal menyimpan: $e');
+      if (mounted) {
+        // Parse error for user-friendly message
+        String errorMsg = e.toString().replaceAll('Exception: ', '');
+        _showError('Gagal menyimpan: $errorMsg');
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

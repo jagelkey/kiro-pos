@@ -27,8 +27,15 @@ class ProductRepository {
 
   /// Get all products for a tenant, optionally filtered by branch
   /// Requirements 2.1, 2.2, 2.4: Multi-tenant data isolation with branch filtering
+  /// Supports offline mode for Android
   Future<List<Product>> getProducts(String tenantId, {String? branchId}) async {
     try {
+      // Validate tenantId
+      if (tenantId.isEmpty) {
+        debugPrint('Warning: Empty tenantId provided to getProducts');
+        return [];
+      }
+
       if (kIsWeb) {
         // Note: Web mock data doesn't have branchId, so we skip branch filtering for web
         return _webProducts.where((p) => p.tenantId == tenantId).toList();
@@ -36,13 +43,17 @@ class ProductRepository {
 
       final db = await _db.database;
       // Build query with optional branch filter
+      // Note: Products table may not have branch_id column in all schemas
+      // For now, filter by tenant only - products are typically shared across branches
       String whereClause = 'tenant_id = ?';
       List<dynamic> whereArgs = [tenantId];
 
-      if (branchId != null && branchId.isNotEmpty) {
-        whereClause += ' AND branch_id = ?';
-        whereArgs.add(branchId);
-      }
+      // Branch filtering is optional for products (products can be shared across branches)
+      // Uncomment below if products should be branch-specific
+      // if (branchId != null && branchId.isNotEmpty) {
+      //   whereClause += ' AND (branch_id = ? OR branch_id IS NULL)';
+      //   whereArgs.add(branchId);
+      // }
 
       final results = await db.query(
         'products',

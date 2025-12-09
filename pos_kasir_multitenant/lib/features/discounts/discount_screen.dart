@@ -285,23 +285,43 @@ class _DiscountList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (discounts.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      return RefreshIndicator(
+        onRefresh: () =>
+            ref.read(discountListProvider.notifier).loadDiscounts(),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           children: [
-            Icon(Icons.local_offer_outlined,
-                size: 64, color: AppTheme.textMuted),
-            const SizedBox(height: 16),
-            Text(
-              'Belum ada diskon',
-              style: TextStyle(fontSize: 18, color: AppTheme.textMuted),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              canManage
-                  ? 'Tambahkan diskon untuk menarik pelanggan'
-                  : 'Belum ada diskon yang tersedia',
-              style: TextStyle(color: AppTheme.textMuted),
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.6,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.local_offer_outlined,
+                        size: 64, color: AppTheme.textMuted),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Belum ada diskon',
+                      style: TextStyle(fontSize: 18, color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      canManage
+                          ? 'Tambahkan diskon untuk menarik pelanggan'
+                          : 'Belum ada diskon yang tersedia',
+                      style: TextStyle(color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 24),
+                    TextButton.icon(
+                      onPressed: () => ref
+                          .read(discountListProvider.notifier)
+                          .loadDiscounts(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh'),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -335,23 +355,28 @@ class _DiscountList extends ConsumerWidget {
             ],
           ),
         ),
-        // List
+        // List with RefreshIndicator
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: discounts.length,
-            itemBuilder: (context, index) => _DiscountCard(
-              discount: discounts[index],
-              canManage: canManage,
-              onEdit: canManage
-                  ? () => _showEditDialog(context, ref, discounts[index])
-                  : null,
-              onDelete: canManage
-                  ? () => _confirmDelete(context, ref, discounts[index])
-                  : null,
-              onToggle: canManage
-                  ? () => _toggleStatus(context, ref, discounts[index])
-                  : null,
+          child: RefreshIndicator(
+            onRefresh: () =>
+                ref.read(discountListProvider.notifier).loadDiscounts(),
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: discounts.length,
+              itemBuilder: (context, index) => _DiscountCard(
+                discount: discounts[index],
+                canManage: canManage,
+                onEdit: canManage
+                    ? () => _showEditDialog(context, ref, discounts[index])
+                    : null,
+                onDelete: canManage
+                    ? () => _confirmDelete(context, ref, discounts[index])
+                    : null,
+                onToggle: canManage
+                    ? () => _toggleStatus(context, ref, discounts[index])
+                    : null,
+              ),
             ),
           ),
         ),
@@ -857,7 +882,7 @@ class _DiscountFormDialogState extends ConsumerState<_DiscountFormDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<DiscountType>(
-                        initialValue: _type,
+                        value: _type,
                         decoration: const InputDecoration(
                           labelText: 'Tipe Diskon',
                           prefixIcon: Icon(Icons.category),

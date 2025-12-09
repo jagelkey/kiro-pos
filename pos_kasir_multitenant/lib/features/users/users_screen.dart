@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/user.dart';
 import '../../shared/widgets/app_card.dart';
 import '../auth/auth_provider.dart';
@@ -101,137 +103,152 @@ class _UsersScreenState extends ConsumerState<_UsersScreenContent> {
           ),
         ],
       ),
-      body: usersAsync.when(
-        data: (allUsers) {
-          final users = _filterUsers(allUsers);
-          final screenWidth = MediaQuery.of(context).size.width;
-          final isCompact = screenWidth < 400;
+      body: Column(
+        children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: usersAsync.when(
+              data: (allUsers) {
+                final users = _filterUsers(allUsers);
+                final screenWidth = MediaQuery.of(context).size.width;
+                final isCompact = screenWidth < 400;
 
-          return Column(
-            children: [
-              // Search & Filter
-              Container(
-                padding: EdgeInsets.all(isCompact ? 10 : 12),
-                color: Colors.white,
-                child: Column(
+                return Column(
                   children: [
-                    // Search
-                    SizedBox(
-                      height: isCompact ? 40 : 44,
-                      child: TextField(
-                        decoration: InputDecoration(
-                          hintText: 'Cari pengguna...',
-                          hintStyle: TextStyle(fontSize: isCompact ? 12 : 13),
-                          prefixIcon:
-                              Icon(Icons.search, size: isCompact ? 18 : 20),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(color: AppTheme.borderColor),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(color: AppTheme.borderColor),
-                          ),
-                          filled: true,
-                          fillColor: AppTheme.backgroundColor,
-                          contentPadding: EdgeInsets.symmetric(
-                              horizontal: isCompact ? 10 : 12),
-                        ),
-                        style: TextStyle(fontSize: isCompact ? 12 : 13),
-                        onChanged: (value) =>
-                            setState(() => _searchQuery = value),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Role Filter
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
+                    // Search & Filter
+                    Container(
+                      padding: EdgeInsets.all(isCompact ? 10 : 12),
+                      color: Colors.white,
+                      child: Column(
                         children: [
-                          _FilterChip(
-                            label: 'Semua',
-                            isSelected: _selectedRole == null,
-                            onTap: () => setState(() => _selectedRole = null),
+                          // Search
+                          SizedBox(
+                            height: isCompact ? 40 : 44,
+                            child: TextField(
+                              decoration: InputDecoration(
+                                hintText: 'Cari pengguna...',
+                                hintStyle:
+                                    TextStyle(fontSize: isCompact ? 12 : 13),
+                                prefixIcon: Icon(Icons.search,
+                                    size: isCompact ? 18 : 20),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide:
+                                      BorderSide(color: AppTheme.borderColor),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide:
+                                      BorderSide(color: AppTheme.borderColor),
+                                ),
+                                filled: true,
+                                fillColor: AppTheme.backgroundColor,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: isCompact ? 10 : 12),
+                              ),
+                              style: TextStyle(fontSize: isCompact ? 12 : 13),
+                              onChanged: (value) =>
+                                  setState(() => _searchQuery = value),
+                            ),
                           ),
-                          const SizedBox(width: 6),
-                          _FilterChip(
-                            label: '👑 Owner',
-                            isSelected: _selectedRole == UserRole.owner,
-                            onTap: () =>
-                                setState(() => _selectedRole = UserRole.owner),
-                          ),
-                          const SizedBox(width: 6),
-                          _FilterChip(
-                            label: '👨‍💼 Manager',
-                            isSelected: _selectedRole == UserRole.manager,
-                            onTap: () => setState(
-                                () => _selectedRole = UserRole.manager),
-                          ),
-                          const SizedBox(width: 6),
-                          _FilterChip(
-                            label: '💰 Kasir',
-                            isSelected: _selectedRole == UserRole.cashier,
-                            onTap: () => setState(
-                                () => _selectedRole = UserRole.cashier),
+                          const SizedBox(height: 8),
+                          // Role Filter
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _FilterChip(
+                                  label: 'Semua',
+                                  isSelected: _selectedRole == null,
+                                  onTap: () =>
+                                      setState(() => _selectedRole = null),
+                                ),
+                                const SizedBox(width: 6),
+                                _FilterChip(
+                                  label: '👑 Owner',
+                                  isSelected: _selectedRole == UserRole.owner,
+                                  onTap: () => setState(
+                                      () => _selectedRole = UserRole.owner),
+                                ),
+                                const SizedBox(width: 6),
+                                _FilterChip(
+                                  label: '👨‍💼 Manager',
+                                  isSelected: _selectedRole == UserRole.manager,
+                                  onTap: () => setState(
+                                      () => _selectedRole = UserRole.manager),
+                                ),
+                                const SizedBox(width: 6),
+                                _FilterChip(
+                                  label: '💰 Kasir',
+                                  isSelected: _selectedRole == UserRole.cashier,
+                                  onTap: () => setState(
+                                      () => _selectedRole = UserRole.cashier),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
                     ),
+
+                    // Summary Card
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isCompact ? 10 : 12,
+                        vertical: isCompact ? 8 : 10,
+                      ),
+                      child: _UsersSummaryCard(users: allUsers),
+                    ),
+
+                    // Users List
+                    Expanded(
+                      child: users.isEmpty
+                          ? _EmptyState(
+                              onAddUser: () => _showUserForm(context),
+                            )
+                          : ListView.builder(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: isCompact ? 10 : 12,
+                              ),
+                              itemCount: users.length,
+                              itemBuilder: (context, index) {
+                                final user = users[index];
+                                return _UserCard(
+                                  user: user,
+                                  onEdit: () =>
+                                      _showUserForm(context, user: user),
+                                  onDelete: () => _confirmDelete(context, user),
+                                  onToggleStatus: () => _toggleUserStatus(user),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                );
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline,
+                        size: 64, color: Colors.red),
+                    const SizedBox(height: 16),
+                    Text('Error: $e'),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () =>
+                          ref.read(usersProvider.notifier).loadUsers(),
+                      child: const Text('Coba Lagi'),
+                    ),
                   ],
                 ),
               ),
-
-              // Summary Card
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isCompact ? 10 : 12,
-                  vertical: isCompact ? 8 : 10,
-                ),
-                child: _UsersSummaryCard(users: allUsers),
-              ),
-
-              // Users List
-              Expanded(
-                child: users.isEmpty
-                    ? _EmptyState(
-                        onAddUser: () => _showUserForm(context),
-                      )
-                    : ListView.builder(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: isCompact ? 10 : 12,
-                        ),
-                        itemCount: users.length,
-                        itemBuilder: (context, index) {
-                          final user = users[index];
-                          return _UserCard(
-                            user: user,
-                            onEdit: () => _showUserForm(context, user: user),
-                            onDelete: () => _confirmDelete(context, user),
-                            onToggleStatus: () => _toggleUserStatus(user),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.red),
-              const SizedBox(height: 16),
-              Text('Error: $e'),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => ref.read(usersProvider.notifier).loadUsers(),
-                child: const Text('Coba Lagi'),
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
+          ), // End of Expanded
+        ], // End of Column children
+      ), // End of Column (body)
       floatingActionButton: ref.watch(canManageUsersProvider)
           ? FloatingActionButton.extended(
               onPressed: () => _showUserForm(context),

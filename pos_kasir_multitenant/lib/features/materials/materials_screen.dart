@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/material.dart' as mat;
 import '../../data/repositories/material_repository.dart' show StockMovement;
 import 'materials_provider.dart';
@@ -70,6 +72,8 @@ class MaterialsScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
           _buildSearchFilterBar(context, ref),
           Expanded(
             child: materialsAsync.when(

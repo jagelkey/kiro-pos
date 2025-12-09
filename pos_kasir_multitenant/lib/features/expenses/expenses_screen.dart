@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/expense.dart';
 import 'expenses_provider.dart';
 import '../auth/auth_provider.dart';
@@ -75,6 +77,8 @@ class ExpensesScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
           _buildFilterBar(context, ref),
           Expanded(
             child: expensesAsync.when(

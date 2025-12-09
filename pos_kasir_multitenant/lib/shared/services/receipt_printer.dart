@@ -46,7 +46,7 @@ class ReceiptPrinter {
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf,
       name: 'Struk_${transaction.id.substring(0, 8)}',
-      format: PdfPageFormat.roll80,
+      format: PdfPageFormat.a4,
     );
   }
 
@@ -103,6 +103,7 @@ class ReceiptPrinter {
                   canDebug: false,
                   allowPrinting: true,
                   allowSharing: true,
+                  initialPageFormat: PdfPageFormat.a4,
                   pdfFileName: 'Struk_${transaction.id.substring(0, 8)}.pdf',
                 ),
               ),
@@ -133,16 +134,24 @@ class ReceiptPrinter {
         ? pw.ThemeData.withFont(base: _regularFont, bold: _boldFont)
         : null;
 
+    // Receipt width for thermal printer style (80mm = ~226 points)
+    const double receiptWidth = 226;
+
     pdf.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.roll80,
-        margin: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(20),
         theme: theme,
         build: (pw.Context context) {
           return pw.Center(
             child: pw.Container(
-              width: double.infinity,
+              width: receiptWidth,
+              padding: const pw.EdgeInsets.all(12),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: PdfColors.grey300, width: 0.5),
+              ),
               child: pw.Column(
+                mainAxisSize: pw.MainAxisSize.min,
                 crossAxisAlignment: pw.CrossAxisAlignment.center,
                 children: [
                   // Logo (if available)
@@ -268,6 +277,9 @@ class ReceiptPrinter {
         },
       ),
     );
+
+    // Also add a page for thermal printer format (roll80)
+    // This can be used when printing to actual thermal printer
 
     return Uint8List.fromList(await pdf.save());
   }

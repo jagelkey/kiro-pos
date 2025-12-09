@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/user.dart';
 import '../../data/models/tenant.dart';
@@ -53,7 +53,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     try {
       if (AppConfig.useSupabase) {
-        await _supabaseLogin(email, password, tenantId);
+        try {
+          await _supabaseLogin(email, password, tenantId);
+        } catch (e) {
+          // Fallback to local database if Supabase fails (offline mode)
+          if (!kIsWeb) {
+            debugPrint('Supabase login failed, falling back to local: $e');
+            await _databaseLogin(email, password, tenantId);
+          } else {
+            // On web, fallback to mock data
+            debugPrint('Supabase login failed, falling back to mock: $e');
+            await _mockLogin(email, password, tenantId);
+          }
+        }
       } else if (kIsWeb) {
         await _mockLogin(email, password, tenantId);
       } else {

@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/product.dart';
 import '../../data/models/material.dart' as mat;
 import '../products/products_provider.dart';
@@ -46,22 +48,33 @@ class RecipesScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: productsAsync.when(
-        data: (products) => materialsAsync.when(
-          data: (materials) => recipesAsync.when(
-            data: (recipes) {
-              var filtered = _filterProducts(
-                  products, recipes, searchQuery, recipeFilter, categoryFilter);
-              return _buildContent(context, ref, filtered, materials, recipes);
-            },
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => _buildErrorWidget(context, ref, e, 'resep'),
+      body: Column(
+        children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: productsAsync.when(
+              data: (products) => materialsAsync.when(
+                data: (materials) => recipesAsync.when(
+                  data: (recipes) {
+                    var filtered = _filterProducts(products, recipes,
+                        searchQuery, recipeFilter, categoryFilter);
+                    return _buildContent(
+                        context, ref, filtered, materials, recipes);
+                  },
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (e, _) => _buildErrorWidget(context, ref, e, 'resep'),
+                ),
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) =>
+                    _buildErrorWidget(context, ref, e, 'bahan baku'),
+              ),
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => _buildErrorWidget(context, ref, e, 'produk'),
+            ),
           ),
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => _buildErrorWidget(context, ref, e, 'bahan baku'),
-        ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _buildErrorWidget(context, ref, e, 'produk'),
+        ],
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/discount.dart';
 import '../../data/models/user.dart';
 import '../../shared/widgets/app_card.dart';
@@ -199,7 +200,12 @@ class DiscountScreen extends ConsumerWidget {
       DiscountListState state, bool canManage) {
     // Loading state
     if (state.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Column(
+        children: [
+          if (!kIsWeb) const OfflineIndicator(),
+          const Expanded(child: Center(child: CircularProgressIndicator())),
+        ],
+      );
     }
 
     // Error state with retry
@@ -246,7 +252,14 @@ class DiscountScreen extends ConsumerWidget {
     }
 
     // Data state
-    return _DiscountList(discounts: state.discounts, canManage: canManage);
+    return Column(
+      children: [
+        if (!kIsWeb) const OfflineIndicator(),
+        Expanded(
+            child: _DiscountList(
+                discounts: state.discounts, canManage: canManage)),
+      ],
+    );
   }
 
   void _showDiscountDialog(BuildContext context, WidgetRef ref,

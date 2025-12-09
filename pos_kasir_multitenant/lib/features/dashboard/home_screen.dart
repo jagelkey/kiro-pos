@@ -1,7 +1,9 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../shared/widgets/app_card.dart';
 import 'dashboard_provider.dart';
 
@@ -18,15 +20,23 @@ class HomeScreen extends ConsumerWidget {
         backgroundColor: AppTheme.backgroundColor,
         elevation: 0,
       ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          ref.read(dashboardProvider.notifier).refresh();
-        },
-        child: dashboardData.isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : dashboardData.error != null
-                ? _buildErrorWidget(context, ref, dashboardData.error!)
-                : _buildContent(context, ref, dashboardData),
+      body: Column(
+        children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                ref.read(dashboardProvider.notifier).refresh();
+              },
+              child: dashboardData.isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : dashboardData.error != null
+                      ? _buildErrorWidget(context, ref, dashboardData.error!)
+                      : _buildContent(context, ref, dashboardData),
+            ),
+          ),
+        ],
       ),
     );
   }

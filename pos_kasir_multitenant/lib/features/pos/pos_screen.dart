@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/config/app_config.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/exceptions/checkout_exception.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/services/receipt_printer.dart';
 import '../../data/models/product.dart';
@@ -22,7 +22,6 @@ import '../recipes/recipes_provider.dart';
 import '../dashboard/dashboard_provider.dart';
 import '../shift/shift_provider.dart'; // Requirements 13.5: Shift integration
 import 'cart_persistence.dart';
-import 'pos_checkout_helper.dart';
 
 final cartProvider = StateNotifierProvider<CartNotifier, List<CartItem>>(
     (ref) => CartNotifier(ref));
@@ -231,7 +230,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   String _paymentMethod = 'cash';
   String? _lastTenantId;
   bool _isRefreshing = false;
-  final bool _isCheckingOut = false;
+  bool _isCheckingOut = false;
 
   @override
   void initState() {
@@ -342,14 +341,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             ),
         ],
       ),
-      body: productsAsync.when(
-        data: (products) => RefreshIndicator(
-          onRefresh: _refreshData,
-          child: _buildResponsiveBody(
-              products, cart, isDesktop, isTablet, isMobile),
-        ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _buildErrorWidget(e),
+      body: Column(
+        children: [
+          // Offline indicator banner
+          const OfflineIndicator(),
+          // Main content
+          Expanded(
+            child: productsAsync.when(
+              data: (products) => RefreshIndicator(
+                onRefresh: _refreshData,
+                child: _buildResponsiveBody(
+                    products, cart, isDesktop, isTablet, isMobile),
+              ),
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => _buildErrorWidget(e),
+            ),
+          ),
+        ],
       ),
       // Floating cart button for mobile
       floatingActionButton:
@@ -515,11 +523,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Future<void> _checkout() async {
+    // Prevent double-click / race condition
+    if (_isCheckingOut) return;
+
     final cart = ref.read(cartProvider);
     if (cart.isEmpty) return;
 
     final authState = ref.read(authProvider);
     if (authState.user == null || authState.tenant == null) return;
+
+    setState(() => _isCheckingOut = true);
 
     // Requirements 13.5: Warn if no active shift (optional - allow transaction but warn)
     final activeShift = ref.read(activeShiftProvider).value;
@@ -685,6 +698,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingOut = false);
       }
     }
   }
@@ -1086,15 +1103,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           // Preview & Print button
           OutlinedButton.icon(
               onPressed: () async {
-                final authState = ref.read(authProvider);
-                if (authState.tenant != null && authState.user != null) {
+                if (tenant != null && user != null) {
                   try {
                     // Show preview with print option
                     await ReceiptPrinter.showReceiptPreview(
                       context: context,
                       transaction: transaction,
-                      tenant: authState.tenant!,
-                      user: authState.user!,
+                      tenant: tenant,
+                      user: user,
                       cashReceived: cashReceived,
                     );
                   } catch (e) {
@@ -1115,14 +1131,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           // Direct print button
           OutlinedButton.icon(
               onPressed: () async {
-                final authState = ref.read(authProvider);
-                if (authState.tenant != null && authState.user != null) {
+                if (tenant != null && user != null) {
                   try {
                     await ReceiptPrinter.printReceipt(
                       context: context,
                       transaction: transaction,
-                      tenant: authState.tenant!,
-                      user: authState.user!,
+                      tenant: tenant,
+                      user: user,
                       cashReceived: cashReceived,
                     );
                   } catch (e) {

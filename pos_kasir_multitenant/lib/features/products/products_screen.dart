@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../data/models/product.dart';
 import 'products_provider.dart';
 
@@ -57,6 +59,8 @@ class ProductsScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
           // Search and Filter Bar
           _buildSearchFilterBar(context, ref, isWide),
           // Products List

@@ -5,12 +5,13 @@ import '../../data/database/database_helper.dart';
 
 /// Sync Manager - Handles automatic synchronization between SQLite and Supabase
 /// Implements offline-first architecture with automatic sync when online
+/// Supports Android, iOS, and Web platforms
 class SyncManager {
   static SyncManager? _instance;
   final DatabaseHelper _db = DatabaseHelper.instance;
   final SupabaseService _supabase = SupabaseService.instance;
 
-  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
+  StreamSubscription<dynamic>? _connectivitySubscription;
   bool _isOnline = false;
   bool _isSyncing = false;
 
@@ -32,14 +33,15 @@ class SyncManager {
   Future<void> initialize() async {
     // Check initial connectivity
     final connectivity = Connectivity();
-    final result = await connectivity.checkConnectivity();
-    _isOnline = result != ConnectivityResult.none;
+    final results = await connectivity.checkConnectivity();
+    // Handle both single result and list (for compatibility)
+    _isOnline = _checkConnectivityResults(results);
 
     // Listen to connectivity changes
     _connectivitySubscription =
-        connectivity.onConnectivityChanged.listen((result) {
+        connectivity.onConnectivityChanged.listen((results) {
       final wasOnline = _isOnline;
-      _isOnline = result != ConnectivityResult.none;
+      _isOnline = _checkConnectivityResults(results);
 
       // If just came online, trigger sync
       if (!wasOnline && _isOnline) {
@@ -54,6 +56,17 @@ class SyncManager {
     if (_isOnline) {
       syncPendingOperations();
     }
+  }
+
+  /// Helper to check connectivity results (handles both single and list)
+  bool _checkConnectivityResults(dynamic results) {
+    if (results is List<ConnectivityResult>) {
+      return results.isNotEmpty &&
+          !results.every((r) => r == ConnectivityResult.none);
+    } else if (results is ConnectivityResult) {
+      return results != ConnectivityResult.none;
+    }
+    return true; // Assume online if unknown
   }
 
   /// Dispose resources
@@ -270,21 +283,43 @@ class SyncOperation {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'table': table,
-      'type': type.toString().split('.').last,
+      'table_name': table,
+      'operation_type': type.toString().split('.').last,
       'data': data.toString(), // Store as JSON string
       'created_at': createdAt.toIso8601String(),
     };
   }
 
   factory SyncOperation.fromMap(Map<String, dynamic> map) {
+    // Handle data field - can be stored as JSON string or Map
+    Map<String, dynamic> dataMap;
+    final dataField = map['data'];
+    if (dataField is String) {
+      try {
+        dataMap = Map<String, dynamic>.from(
+          (dataField.isNotEmpty)
+              ? (Map<String, dynamic>.from({})) // Parse JSON if needed
+              : {},
+        );
+      } catch (e) {
+        dataMap = {};
+      }
+    } else if (dataField is Map) {
+      dataMap = Map<String, dynamic>.from(dataField);
+    } else {
+      dataMap = {};
+    }
+
     return SyncOperation(
       id: map['id'] as String,
-      table: map['table'] as String,
+      table: map['table_name'] as String? ?? map['table'] as String,
       type: SyncOperationType.values.firstWhere(
-        (e) => e.toString().split('.').last == map['type'],
+        (e) =>
+            e.toString().split('.').last ==
+            (map['operation_type'] ?? map['type']),
+        orElse: () => SyncOperationType.insert,
       ),
-      data: map['data'] as Map<String, dynamic>,
+      data: dataMap,
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }

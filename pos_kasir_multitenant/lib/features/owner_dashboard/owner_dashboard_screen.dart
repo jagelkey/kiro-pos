@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/offline_indicator.dart';
 import '../../shared/widgets/app_card.dart';
 import 'owner_dashboard_provider.dart';
 
@@ -32,11 +34,19 @@ class OwnerDashboardScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: dashboardData.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : dashboardData.error != null
-              ? _buildErrorWidget(context, ref, dashboardData.error!)
-              : _buildContent(context, dashboardData),
+      body: Column(
+        children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: dashboardData.isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : dashboardData.error != null
+                    ? _buildErrorWidget(context, ref, dashboardData.error!)
+                    : _buildContent(context, dashboardData),
+          ),
+        ],
+      ),
     );
   }
 

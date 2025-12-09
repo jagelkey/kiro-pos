@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/constants/breakpoints.dart';
+import '../../core/widgets/offline_indicator.dart';
+import '../../core/widgets/connection_status_widget.dart';
 import '../../shared/widgets/app_card.dart';
 import 'dashboard_provider.dart';
 
@@ -19,6 +22,15 @@ class DashboardScreen extends ConsumerWidget {
         backgroundColor: AppTheme.backgroundColor,
         elevation: 0,
         actions: [
+          // Connection status indicator (Requirements 3.1, 4.1)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+            child: ConnectionStatusWidget(
+              isOnline: dashboardData.isOnline,
+              lastSynced: dashboardData.lastUpdated,
+              onRetry: () => ref.read(dashboardProvider.notifier).refresh(),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.read(dashboardProvider.notifier).refresh(),
@@ -26,10 +38,18 @@ class DashboardScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async =>
-            ref.read(dashboardProvider.notifier).loadDashboardData(),
-        child: _buildBody(context, ref, dashboardData),
+      body: Column(
+        children: [
+          // Offline indicator for Android
+          if (!kIsWeb) const OfflineIndicator(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async =>
+                  ref.read(dashboardProvider.notifier).loadDashboardData(),
+              child: _buildBody(context, ref, dashboardData),
+            ),
+          ),
+        ],
       ),
     );
   }
